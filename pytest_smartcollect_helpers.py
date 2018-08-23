@@ -2,7 +2,8 @@ import io
 import re
 import typing
 from git import Repo
-from ast import NodeVisitor
+from functools import partial
+from ast import parse, NodeVisitor, NodeTransformer
 from contextlib import redirect_stdout
 
 ListOrNone = typing.Union[list, None]
@@ -15,9 +16,9 @@ class ChangedFile(object):
         self.changed_lines = changed_lines
 
 
-class GenericExtractor(NodeVisitor):
+class GenericVisitor(NodeVisitor):
     def __init__(self):
-        super(NodeVisitor, self).__init__()
+        super(GenericVisitor, self).__init__()
 
     def extract(self, node):
         f = io.StringIO()
@@ -28,15 +29,43 @@ class GenericExtractor(NodeVisitor):
         return f.getvalue().strip().split('\n')
 
 
-class NameExtractor(GenericExtractor):
-    def __init__(self):
-        super(GenericExtractor, self).__init__()
+class ObjectNameExtractor(GenericVisitor):
+    def __init__(self, callback=None):
+        super(ObjectNameExtractor, self).__init__()
 
     def visit_Call(self, node):
         if node.func.__class__.__name__ == "Name":
             print(node.func.id)
 
         self.generic_visit(node)
+
+
+class ClassDefExtractor(GenericVisitor):
+    def __init__(self, callback=None):
+        super(ClassDefExtractor, self).__init__()
+
+    def visit_ClassDef(self, node):
+        pass
+
+
+class FunctionDefExtractor(GenericVisitor):
+    def __init__(self, callback=None):
+        super(FunctionDefExtractor, self).__init__()
+
+    def visit_FunctionDef(self, node):
+        if node.func.__class__.__name__ == "FunctionDef":
+            print()
+
+
+class ChangedExtractor(GenericVisitor):
+    def __init__(self, node_type, ranges):
+        super(ChangedExtractor, self).__init__()
+        setattr(self, 'visit_%s' % node_type, partial(self._extract_change, ranges))
+
+    def _extract_change(self, ranges, node):
+        for r in ranges:
+            if node.lineno in r:
+                print()
 
 
 def find_changed_files(repo, ext=".py"):
@@ -59,17 +88,22 @@ def find_changed_files(repo, ext=".py"):
             ranges = diff_lines_spec.split(' ')
             if len(ranges) < 2:
                 start, count = ranges[0].split(',')
-                changed_lines = sorted(list(range(start, start + count)))
+                # changed_lines = sorted(list(range(start, start + count)))
+                changed_lines = [range(start, start + count)]
 
             else:
-                preimage_start, preimage_count = ranges[0].split(',')
-                postimage_start, postimage_count = ranges[1].split(',')
+                preimage_start, preimage_count = [int(x) for x in ranges[0].split(',')]
+                postimage_start, postimage_count = [int(x) for x in ranges[1].split(',')]
 
-                changed_lines = sorted(list(
-                    set(range(preimage_start, preimage_start + preimage_count)).union(
-                        set(range(postimage_start, postimage_start + postimage_count))
-                    )
-                ))
+                # changed_lines = sorted(list(
+                #     set(range(preimage_start, preimage_start + preimage_count)).union(
+                #         set(range(postimage_start, postimage_start + postimage_count))
+                #     )
+                # ))
+                changed_lines = [
+                    range(preimage_start, preimage_start + preimage_count),
+                    range(postimage_start, postimage_start + postimage_count)
+                ]
 
         elif d.change_type == 'D':  # deleted paths
             filepath = d.a_path
@@ -96,4 +130,7 @@ def find_changed_files(repo, ext=".py"):
 
 
 def find_changed_members(changed_module: ChangedFile):
-    pass
+    with open(changed_module.filepath) as f:
+        module_ast = parse(f.read())
+
+
