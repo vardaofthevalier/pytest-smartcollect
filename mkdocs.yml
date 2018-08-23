@@ -1,0 +1,10 @@
+site_name: pytest-smartcollect
+site_description: A plugin for testing only changed code
+site_author: Abigail Hahn
+
+theme: readthedocs
+
+repo_url: https://github.com/vardaofthevalier/pytest-smartcollect
+
+pages:
+- Home: index.md
