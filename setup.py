@@ -42,9 +42,10 @@ setup(
         'Operating System :: OS Independent',
         'License :: OSI Approved :: BSD License',
     ],
+    packages=["pytest_smartcollect"],
     entry_points={
         'pytest11': [
-            'smartcollect = pytest_smartcollect',
+            'smartcollect = pytest_smartcollect.plugin',
         ],
     },
 )

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-from pytest_smartcollect_helpers import find_changed_files, find_changed_members, NameExtractor
+from pytest_smartcollect.helpers import find_changed_files, find_changed_members, find_import, ObjectNameExtractor
 
-import re
-from ast import parse, walk
+from ast import parse
 from importlib import import_module
 
 
@@ -14,7 +13,6 @@ def pytest_addoption(parser):
         '--git-repo-root',
         action='store',
         dest='git_repo_root',
-        required=True,
         help='Set the value for the fixture "git_repo_root", which is used to evaluate changed files.'
     )
 
@@ -23,20 +21,47 @@ def pytest_addoption(parser):
 
 @pytest.fixture
 def git_repo_root(request):
+    from git import Repo
+    from git.exc import InvalidGitRepositoryError
+    try:
+        Repo(request.config.option.git_repo_root)
+
+    except InvalidGitRepositoryError:
+        raise Exception("Invalid value for --git-repo-root: must be a valid git repository")
+
     return request.config.option.git_repo_root
 
 
 def pytest_collection_modifyitems(config, items):
+    # TODO: manage interaction with coverage plugin in order to remove files from the coverage report that aren't going to be tested
     deleted_indices = []
     changed_files = find_changed_files(git_repo_root)
 
-    # TODO: modify behavior by change type
-    # if deleted: need to check the entire project for imports of the deleted module (fail fast); otherwise remove the file from changed_files
-    # if renamed: need to check the entire project for imports of the OLD name; then continue on as normal
-    # if added: if fail_if_untested is set, fail if no tests exist for the added module; otherwise continue as normal
-    # if modified: continue as normal
-    # if changed file type: remove from changed_files (for now)
-    name_extractor = NameExtractor()
+    for ch in changed_files:
+        # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
+        if ch.change_type == "D":
+            found = find_import(git_repo_root, ch.current_filepath)
+            if len(found) > 0:
+                msg = ""
+                for f in found:
+                    msg += "Module from deleted file '%s' imported in file '%s'\n" % (ch.current_filepath, f)
+
+                raise Exception(msg)
+
+        # check if any renamed files are imported by their old name
+        elif ch.change_type == "R":
+            found = find_import(git_repo_root, ch.old_filepath)
+            if len(found) > 0:
+                msg = ""
+                for f in found:
+                    msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (ch.old_filepath, ch.current_filepath, f)
+
+                raise Exception(msg)
+
+        else:
+            continue
+
+    name_extractor = ObjectNameExtractor()
 
     for idx, i in enumerate(items):
         with open(i.fspath) as f:
