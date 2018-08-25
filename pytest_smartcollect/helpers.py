@@ -1,15 +1,14 @@
 import io
 import os
-import re
 import ast
 import typing
 from git import Repo
-from functools import partial
 from importlib import import_module
 from contextlib import redirect_stdout
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
+ListOfString = typing.List[str]
 
 
 class ChangedFile(object):
@@ -20,11 +19,14 @@ class ChangedFile(object):
         self.changed_lines = changed_lines
 
 
+DictOfChangedFile = typing.Dict[str, ChangedFile]
+
+
 class GenericVisitor(ast.NodeVisitor):
     def __init__(self):
         super(GenericVisitor, self).__init__()
 
-    def extract(self, node):
+    def extract(self, node) -> ListOfString:
         f = io.StringIO()
 
         with redirect_stdout(f):
@@ -38,7 +40,7 @@ class ObjectNameExtractor(GenericVisitor):
         super(ObjectNameExtractor, self).__init__()
 
     def visit_Call(self, node):
-        if node.func.__class__.__name__ == "Name":
+        if isinstance(node.func, ast.Name):
             print(node.func.id)
 
         self.generic_visit(node)
@@ -56,14 +58,33 @@ class ImportModuleNameExtractor(GenericVisitor):
         print(node.module)
 
 
-def find_changed_files(repo, ext=".py"):
+def find_all_files(repo_path: str) -> DictOfChangedFile:
+    all_files = {}
+    for root, _, files in os.walk(repo_path):
+        for f in files:
+            if os.path.splitext(f)[-1] == "*.py":
+                fpath = os.path.join(root, f)
+                with open(fpath) as g:
+                    all_files[fpath] = ChangedFile(
+                        change_type='A',
+                        old_filepath=None,
+                        current_filepath=fpath,
+                        changed_lines=[range(1, len(g.readlines()))]
+                    )
+
+    return all_files
+
+
+def find_changed_files(repo: Repo) -> DictOfChangedFile:
     changed_files = {}
 
     current_head = repo.head.commit
-    diffs = current_head.diff("HEAD~1", create_patch=True)
+    diffs = current_head.diff("HEAD~1")
+    diffs_with_patch = current_head.diff("HEAD~1", create_patch=True)
 
-    for d in diffs:
-        diff_lines_spec = d.diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
+    for idx, d in enumerate(diffs):
+        assert d.a_path == diffs_with_patch[idx].a_path
+        diff_lines_spec = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
         changed_lines = None
         old_filepath = None
 
@@ -80,8 +101,21 @@ def find_changed_files(repo, ext=".py"):
                 changed_lines = [range(start, start + count)]
 
             else:
-                preimage_start, preimage_count = [int(x) for x in ranges[0].split(',')]
-                postimage_start, postimage_count = [int(x) for x in ranges[1].split(',')]
+                preimage = [int(x) for x in ranges[0].split(',')]
+                preimage_start = preimage[0]
+                if len(preimage) > 1:
+                    preimage_count = preimage[1]
+                else:
+                    preimage_count = 0
+
+                postimage = [int(x) for x in ranges[1].split(',')]
+                postimage_start = postimage[0]
+                if len(postimage) > 1:
+                    postimage_count = postimage[1]
+
+                else:
+                    postimage_count = 0
+
                 changed_lines = [
                     range(preimage_start, preimage_start + preimage_count),
                     range(postimage_start, postimage_start + postimage_count)
@@ -100,7 +134,7 @@ def find_changed_files(repo, ext=".py"):
         else:  # something is seriously wrong...
             raise Exception("Unknown change type '%s'" % d.change_type)
 
-        if os.path.splitext(filepath)[-1] == ext:
+        if os.path.splitext(filepath)[-1] == ".py":
             changed_files[filepath] = ChangedFile(
                 d.change_type,
                 filepath,
@@ -111,38 +145,58 @@ def find_changed_files(repo, ext=".py"):
     return changed_files
 
 
-def find_changed_members(changed_module: ChangedFile):
+def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfString:
     changed_members = []
     name_extractor = ObjectNameExtractor()
-    with open(changed_module.current_filepath) as f:
-        module_ast = ast.parse(f.read())
 
-    for idx, node in enumerate(module_ast.body):
+    with open(os.path.join(repo_path, changed_module.current_filepath)) as f:
+        contents = f.readlines()
+
+    total_lines = len(contents)
+    module_ast = ast.parse('\n'.join(contents))
+    direct_children = sorted(ast.iter_child_nodes(module_ast), key=lambda x: x.lineno)
+    for idx, node in enumerate(direct_children):
         if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
-            r = range(node.lineno, module_ast.body[idx + 1].lineno - 1)
+            if len(direct_children) < idx + 1:
+                r = range(node.lineno, direct_children[idx + 1].lineno)
+
+            else:
+                r = range(node.lineno, total_lines)
+
+            changed_lines = set()
             for ch in changed_module.changed_lines:
-                if set(ch).intersection(set(r)):
-                    changed_members.append(name_extractor.extract(node))
+                changed_lines.update(set(ch))
+
+            if set(changed_lines).intersection(set(r)):
+                if isinstance(node, ast.Assign):
+                    changed_members.extend(name_extractor.extract(node))
+
+                elif isinstance(node, ast.FunctionDef):
+                    changed_members.append(node.name)
+
+                else:
+                    changed_members.append(node.name)
 
     return changed_members
 
 
-def find_import(repo_root, module_path):
+def find_import(repo_root: str, module_path: str) -> ListOfString:
     found = []
     module_name_extractor = ImportModuleNameExtractor()
 
     for root, _, files in os.walk(repo_root):
         for f in files:
             if os.path.splitext(f)[-1] == ".py":
-                with open(f) as g:
+                with open(os.path.join(root, f)) as g:
                     a = ast.parse(g.read())
 
                 for module in module_name_extractor.extract(a):
-                    i = import_module(module)
+                    i = import_module(module)  # this assumes that the module is actually installed...
                     if i.__file__ == module_path:
                         found.append(i.__file__)
 
     return found
+
 
 
 
