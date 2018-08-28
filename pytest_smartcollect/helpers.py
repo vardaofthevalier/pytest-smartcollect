@@ -32,7 +32,7 @@ class GenericVisitor(ast.NodeVisitor):
         with redirect_stdout(f):
             self.generic_visit(node)
 
-        return f.getvalue().strip().split('\n')
+        return list(filter(lambda x: True if x != '' else False, f.getvalue().strip().split('\n')))
 
 
 class ObjectNameExtractor(GenericVisitor):
@@ -58,11 +58,23 @@ class ImportModuleNameExtractor(GenericVisitor):
         print(node.module)
 
 
+def find_git_repo_root(dir: str) -> str:
+    if ".git" in os.listdir(dir):
+        return dir
+
+    else:
+        if os.path.dirname(dir) == dir:
+            raise Exception("No git repo found relative to the pytest rootdir")
+
+        else:
+            return find_git_repo_root(os.path.dirname(dir))
+
+
 def find_all_files(repo_path: str) -> DictOfChangedFile:
     all_files = {}
     for root, _, files in os.walk(repo_path):
         for f in files:
-            if os.path.splitext(f)[-1] == "*.py":
+            if os.path.splitext(f)[-1] == ".py":
                 fpath = os.path.join(root, f)
                 with open(fpath) as g:
                     all_files[fpath] = ChangedFile(
@@ -75,7 +87,7 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
     return all_files
 
 
-def find_changed_files(repo: Repo) -> DictOfChangedFile:
+def find_changed_files(repo: Repo, repo_path: str) -> DictOfChangedFile:
     changed_files = {}
 
     current_head = repo.head.commit
@@ -84,6 +96,7 @@ def find_changed_files(repo: Repo) -> DictOfChangedFile:
 
     for idx, d in enumerate(diffs):
         assert d.a_path == diffs_with_patch[idx].a_path
+
         diff_lines_spec = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
         changed_lines = None
         old_filepath = None
@@ -135,10 +148,10 @@ def find_changed_files(repo: Repo) -> DictOfChangedFile:
             raise Exception("Unknown change type '%s'" % d.change_type)
 
         if os.path.splitext(filepath)[-1] == ".py":
-            changed_files[filepath] = ChangedFile(
+            changed_files[os.path.join(repo_path, filepath)] = ChangedFile(
                 d.change_type,
-                filepath,
-                old_filepath=old_filepath,
+                os.path.join(repo_path, filepath),
+                old_filepath=old_filepath if old_filepath is None else os.path.join(repo_path, old_filepath),
                 changed_lines=changed_lines
             )
 
@@ -191,13 +204,33 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
                     a = ast.parse(g.read())
 
                 for module in module_name_extractor.extract(a):
-                    i = import_module(module)  # this assumes that the module is actually installed...
-                    if i.__file__ == module_path:
-                        found.append(i.__file__)
+                    # determine if the imported module is relative to it's containing package or outside of it
+
+                    package_path = os.path.dirname(os.path.join(root, f))
+                    if "%s.py" % module in os.listdir(package_path):
+                        # in the same package
+                        fully_qualified_module_name = find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
+                        i = import_module(fully_qualified_module_name)
+
+                    else:
+                        # in a different package
+                        i = import_module(module)  # this assumes that the module is actually installed...
+
+                    if os.path.basename(i.__file__) == os.path.basename(module_path):
+                        found.append(f)
+                        break
 
     return found
 
 
+def find_fully_qualified_module_name(path: str) -> str:
+    parts = [os.path.splitext(os.path.basename(path))[0]]
+
+    while "__init__.py" in os.listdir(os.path.dirname(path)):
+        parts.insert(0, os.path.basename(os.path.dirname(path)))
+        path = os.path.dirname(path)
+
+    return ".".join(parts)
 
 
 

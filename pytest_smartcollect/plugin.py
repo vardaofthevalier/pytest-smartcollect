@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-from pytest_smartcollect.helpers import find_all_files, find_changed_files, find_changed_members, find_import, ObjectNameExtractor
+from pytest_smartcollect.helpers import find_git_repo_root, find_all_files, find_changed_files, find_changed_members, find_import, ObjectNameExtractor, ImportModuleNameExtractor
 
 import os
 from ast import parse
@@ -14,9 +14,9 @@ from git.exc import InvalidGitRepositoryError
 def pytest_addoption(parser):
     group = parser.getgroup('smartcollect')
     group.addoption(
-        '--git-repo-root',
-        action='store',
-        dest='git_repo_root',
+        '--smart-collect',
+        action='store_true',
+        dest='smart_collect',
         help='Set the value for the fixture "git_repo_root", which is used to evaluate changed files in a project.'
     )
 
@@ -24,31 +24,16 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture
-def git_repo_root(request):
-    try:
-        Repo(request.config.option.git_repo_root)
-
-    except InvalidGitRepositoryError:
-        raise Exception("Invalid value for --git-repo-root: must be a valid git repository")
-
-    return request.config.option.git_repo_root
-
-# TODO: configure overrides for paths to add in the INI file and on the command line
+def smart_collect(request):
+    return request.config.option.smart_collect
 
 
 def pytest_collection_modifyitems(config, items):
-    # logger = getLogger()
-    #
-    # # if coverage isn't loaded, warn the user that untested files won't be reported, and coverage might help
-    # try:
-    #     config.pluginmanager.get_plugin("coverage")
-    #
-    # except Exception:
-    #     logger.warning("Untested files won't be reported by this plugin -- try Coverage for reported uncovered code.")
+    smart_collect = config.option.smart_collect
 
-    git_repo_root = config.option.git_repo_root
+    if smart_collect:
+        git_repo_root = find_git_repo_root(config.rootdir)
 
-    if git_repo_root is not None:
         repo = Repo(git_repo_root)
 
         total_commits_on_head = len(list(repo.iter_commits("HEAD")))
@@ -57,7 +42,7 @@ def pytest_collection_modifyitems(config, items):
             changed_files = find_all_files(git_repo_root)
 
         else:  # inspect the diff
-            changed_files = find_changed_files(repo)
+            changed_files = find_changed_files(repo, git_repo_root)
 
         # TODO: configure overrides for paths to add in the INI file
 
@@ -98,21 +83,23 @@ def pytest_collection_modifyitems(config, items):
                     continue
 
             name_extractor = ObjectNameExtractor()
+            import_name_extractor = ImportModuleNameExtractor()
 
-            for idx, i in enumerate(items):
-                with open(i.fspath) as f:
+            for test in items:
+                with open(test.fspath) as f:
                     test_ast = parse(f.read())
 
-                imports = filter(lambda x: True if x.__class__.__name__ == "ImportFrom" else False, test_ast.body)
+                imports = import_name_extractor.extract(test_ast)
                 changed_members = []
 
                 for imp in imports:
-                    m = import_module(imp.module)
+                    m = import_module(imp)
+
                     if m.__file__ in changed_files.keys():
                         changed_members.extend(find_changed_members(changed_files[m.__file__], git_repo_root))
 
                 if len(changed_members) > 0:
-                    test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and x.name == i.name else False, test_ast.body))[0]
+                    test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and x.name == test.name else False, test_ast.body))[0]
 
                     used_names = name_extractor.extract(test_fn)
                     found_name = False
@@ -122,13 +109,14 @@ def pytest_collection_modifyitems(config, items):
                             break
 
                     if not found_name:
-                        deleted_indices.append(idx)
+                        skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                        test.add_marker(skip)
 
-            deleted = 0
-            for d in sorted(deleted_indices):
-                items.pop(d - deleted)
-                deleted += 1
+                else:
+                    skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                    test.add_marker(skip)
 
         else:
-            for _ in range(0, len(items)):
-                items.pop()
+            for test in items:
+                skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                test.add_marker(skip)
