@@ -1,5 +1,6 @@
 import io
 import os
+import sys
 import ast
 import typing
 from git import Repo
@@ -204,9 +205,13 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
                     a = ast.parse(g.read())
 
                 for module in module_name_extractor.extract(a):
-                    # determine if the imported module is relative to it's containing package or outside of it
+                    # determine whether or not the module is part of the standard library
+                    if module in sys.builtin_module_names:
+                        continue
 
+                    # determine if the imported module is relative to it's containing package or outside of it
                     package_path = os.path.dirname(os.path.join(root, f))
+                    
                     if "%s.py" % module in os.listdir(package_path):
                         # in the same package
                         fully_qualified_module_name = find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
