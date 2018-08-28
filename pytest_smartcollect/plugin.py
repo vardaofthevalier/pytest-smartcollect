@@ -32,7 +32,7 @@ def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
 
     if smart_collect:
-        git_repo_root = find_git_repo_root(config.rootdir.dirpath())
+        git_repo_root = find_git_repo_root(str(config.rootdir))
 
         repo = Repo(git_repo_root)
 
