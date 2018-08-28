@@ -91,7 +91,11 @@ def pytest_collection_modifyitems(config, items):
                 changed_members = []
 
                 for imp in imports:
-                    m = import_module(imp)
+                    try:
+                        m = import_module(imp)
+
+                    except ImportError:
+                        raise Exception("Module '%s' was imported in test '%s', but the module is not installed in the environment" % (imp, test.name))
 
                     if m.__file__ in changed_files.keys():
                         changed_members.extend(find_changed_members(changed_files[m.__file__], git_repo_root))

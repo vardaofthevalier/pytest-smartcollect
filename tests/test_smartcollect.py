@@ -2,7 +2,6 @@
 import os
 from shutil import rmtree, move
 from git import Repo
-from _pytest.hookspec import pytest_collection
 from pip._internal import main as pip
 
 if not os.environ.get('USERNAME'):
@@ -24,16 +23,16 @@ def test_smart_collect_fixture(testdir):
     )
 
 
-def test_zero_commits(testdir):
-    pass
-
-
-def test_one_commit(testdir):
-    pass
-
-
-def test_two_commits(testdir):
-    pass
+# def test_zero_commits(testdir):
+#     pass
+#
+#
+# def test_one_commit(testdir):
+#     pass
+#
+#
+# def test_two_commits(testdir):
+#     pass
 
 
 def test_GenericVisitor_extract(testdir):

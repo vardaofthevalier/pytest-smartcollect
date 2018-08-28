@@ -211,7 +211,7 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
 
                     # determine if the imported module is relative to it's containing package or outside of it
                     package_path = os.path.dirname(os.path.join(root, f))
-                    
+
                     if "%s.py" % module in os.listdir(package_path):
                         # in the same package
                         fully_qualified_module_name = find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
@@ -219,7 +219,11 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
 
                     else:
                         # in a different package
-                        i = import_module(module)  # this assumes that the module is actually installed...
+                        try:
+                            i = import_module(module)  # this assumes that the module is actually installed...
+
+                        except ImportError:
+                            raise Exception("Module '%s' was imported in file '%s', but the module is not installed in the environment" % (module, f))
 
                     if os.path.basename(i.__file__) == os.path.basename(module_path):
                         found.append(f)
