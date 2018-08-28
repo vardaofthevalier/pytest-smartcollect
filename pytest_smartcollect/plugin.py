@@ -32,7 +32,7 @@ def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
 
     if smart_collect:
-        git_repo_root = find_git_repo_root(config.rootdir)
+        git_repo_root = find_git_repo_root(config.rootdir.dirpath())
 
         repo = Repo(git_repo_root)
 
@@ -45,8 +45,6 @@ def pytest_collection_modifyitems(config, items):
             changed_files = find_changed_files(repo, git_repo_root)
 
         # TODO: configure overrides for paths to add in the INI file
-
-        deleted_indices = []
 
         if len(changed_files) > 0:
             for ch in changed_files.values():
