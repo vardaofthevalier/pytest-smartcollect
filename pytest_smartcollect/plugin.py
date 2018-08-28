@@ -86,7 +86,7 @@ def pytest_collection_modifyitems(config, items):
             for test in items:
                 if test.get_marker('skip'):
                     continue
-                    
+
                 with open(test.fspath) as f:
                     test_ast = parse(f.read())
 

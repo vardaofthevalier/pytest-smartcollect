@@ -223,7 +223,7 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
                             i = import_module(module)  # this assumes that the module is actually installed...
 
                         except ImportError:
-                            raise Exception("Module '%s' was imported in file '%s', but the module is not installed in the environment" % (module, f))
+                            raise Exception("Module '%s' was imported in file '%s', but the module is not installed in the environment" % (module, os.path.join(root, f)))
 
                     if os.path.basename(i.__file__) == os.path.basename(module_path):
                         found.append(f)
