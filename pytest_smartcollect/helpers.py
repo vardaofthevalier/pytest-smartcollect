@@ -88,12 +88,12 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
     return all_files
 
 
-def find_changed_files(repo: Repo, repo_path: str) -> DictOfChangedFile:
+def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfChangedFile:
     changed_files = {}
 
     current_head = repo.head.commit
-    diffs = current_head.diff("HEAD~1")
-    diffs_with_patch = current_head.diff("HEAD~1", create_patch=True)
+    diffs = current_head.diff("HEAD~%d" % commit_range)
+    diffs_with_patch = current_head.diff("HEAD~%d" % commit_range, create_patch=True)
 
     for idx, d in enumerate(diffs):
         assert d.a_path == diffs_with_patch[idx].a_path
