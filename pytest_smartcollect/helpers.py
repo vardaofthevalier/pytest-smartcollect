@@ -212,7 +212,7 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
                     # determine if the imported module is relative to it's containing package or outside of it
                     package_path = os.path.dirname(os.path.join(root, f))
 
-                    if "%s.py" % module in os.listdir(package_path):
+                    if os.path.isfile(os.path.join(package_path, "%s.py" % module)) or os.path.isdir(os.path.join(package_path, module)):
                         # in the same package
                         fully_qualified_module_name = find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
                         i = import_module(fully_qualified_module_name)

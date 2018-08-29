@@ -19,7 +19,15 @@ def pytest_addoption(parser):
         dest='smart_collect',
         help='Set the value for the fixture "git_repo_root", which is used to evaluate changed files in a project.'
     )
-
+    group.addoption(
+        '--ignore-source',
+        action='append',
+        default=[],
+        nargs='?',
+        const=True,
+        metavar='path',
+        dest='ignore_source'
+    )
     # parser.addini('HELLO', 'Dummy pytest.ini setting')
 
 
@@ -30,6 +38,7 @@ def smart_collect(request):
 
 def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
+    ignore_source = config.option.ignore_source
 
     if smart_collect:
         git_repo_root = find_git_repo_root(str(config.rootdir))
@@ -45,12 +54,20 @@ def pytest_collection_modifyitems(config, items):
             changed_files = find_changed_files(repo, git_repo_root)
 
         # TODO: configure overrides for paths to add in the INI file
+        if len(ignore_source) > 0:
+            filtered_changed_files = {}
+            for k, v in changed_files.items():
+                for y in ignore_source:
+                    if os.path.commonpath([v.current_filepath, y]) != y:
+                        filtered_changed_files[k] = v
+
+            changed_files = filtered_changed_files
 
         if len(changed_files) > 0:
             for ch in changed_files.values():
                 # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
                 if ch.change_type == "D":
-                    found = find_import(git_repo_root, ch.current_filepath)
+                    found = find_import(str(config.rootdir), ch.current_filepath)
                     if len(found) > 0:
                         msg = ""
                         for f in found:
@@ -60,7 +77,7 @@ def pytest_collection_modifyitems(config, items):
 
                 # check if any renamed files are imported by their old name
                 elif ch.change_type == "R":
-                    found = find_import(git_repo_root, ch.old_filepath)
+                    found = find_import(str(config.rootdir), ch.old_filepath)
                     if len(found) > 0:
                         msg = ""
                         for f in found:
@@ -70,7 +87,7 @@ def pytest_collection_modifyitems(config, items):
 
                 elif ch.change_type == "T":
                     if os.path.splitext(ch.old_filepath)[-1] == ".py":
-                        found = find_import(git_repo_root, ch.old_filepath)
+                        found = find_import(str(config.rootdir), ch.old_filepath)
                         if len(found) > 0:
                             msg = ""
                             for f in found:
