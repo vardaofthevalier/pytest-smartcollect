@@ -10,6 +10,8 @@ if not os.environ.get('USERNAME'):
 # TODO: new test cases:
 # - test commits < 2, test commits >= 2
 # - test individual change types for diffs
+# - test different commit ranges
+# - test preemptive failures
 
 
 def test_smart_collect_fixture(testdir):
@@ -174,7 +176,7 @@ def test_find_changed_files(testdir):
             repo = Repo(repo_path)
             assert len(list(repo.iter_commits('HEAD'))) == 2
             from pytest_smartcollect.helpers import find_changed_files
-            cf = find_changed_files(Repo(repo_path), repo_path)
+            cf = find_changed_files(Repo(repo_path), repo_path, 1)
             assert len(cf) == 1
             assert r"%s" in cf.keys()
     """ % (temp_repo_folder, os.path.join(temp_repo_folder, "foo.py")))
@@ -211,7 +213,7 @@ def test_find_changed_members(testdir):
             repo_path = r"%s"
             repo = Repo(repo_path)
             from pytest_smartcollect.helpers import find_changed_files, find_changed_members
-            cf = find_changed_files(Repo(repo_path), repo_path)
+            cf = find_changed_files(Repo(repo_path), repo_path, 1)
             cm = find_changed_members(list(cf.values())[-1], repo_path)
             assert len(cm) == 1
             assert r"%s" in cm

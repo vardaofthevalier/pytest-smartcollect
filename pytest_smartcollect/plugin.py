@@ -88,29 +88,49 @@ def pytest_collection_modifyitems(config, items):
             for ch in changed_files.values():
                 # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
                 if ch.change_type == "D":
-                    found = find_import(str(config.rootdir), ch.current_filepath)
-                    if len(found) > 0:
-                        msg = ""
-                        for f in found:
-                            msg += "Module from deleted file '%s' imported in file '%s'\n" % (ch.current_filepath, f)
+                    try:
+                        found = find_import(str(config.rootdir), ch.current_filepath)
 
+                    except Exception as e:
                         if allow_preemptive_failures:
-                            raise Exception(msg)
+                            raise e
 
-                        logger.warning(msg)
+                        else:
+                            logger.warning(str(e))
+
+                    else:
+                        if len(found) > 0:
+                            msg = ""
+                            for f in found:
+                                msg += "Module from deleted file '%s' imported in file '%s'\n" % (ch.current_filepath, f)
+
+                            if allow_preemptive_failures:
+                                raise Exception(msg)
+
+                            logger.warning(msg)
 
                 # check if any renamed files are imported by their old name
                 elif ch.change_type == "R":
-                    found = find_import(str(config.rootdir), ch.old_filepath)
-                    if len(found) > 0:
-                        msg = ""
-                        for f in found:
-                            msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (ch.old_filepath, ch.current_filepath, f)
+                    try:
+                        found = find_import(str(config.rootdir), ch.old_filepath)
 
+                    except Exception as e:
                         if allow_preemptive_failures:
-                            raise Exception(msg)
+                            raise e
 
-                        logger.warning(msg)
+                        else:
+                            logger.warning(str(e))
+
+                    else:
+                        if len(found) > 0:
+                            msg = ""
+                            for f in found:
+                                msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (ch.old_filepath, ch.current_filepath, f)
+
+                            if allow_preemptive_failures:
+                                raise Exception(msg)
+
+                            logger.warning(msg)
 
                 elif ch.change_type == "T":
                     if os.path.splitext(ch.old_filepath)[-1] == ".py":
@@ -122,7 +142,7 @@ def pytest_collection_modifyitems(config, items):
 
                             if allow_preemptive_failures:
                                 raise Exception(msg)
-                            
+
                             logger.warning(msg)
                 else:
                     continue
