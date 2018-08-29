@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-from pytest_smartcollect.helpers import find_git_repo_root, find_all_files, find_changed_files, find_changed_members, find_import, ObjectNameExtractor, ImportModuleNameExtractor
+from pytest_smartcollect.helpers import find_git_repo_root, \
+    find_all_files, \
+    find_changed_files, \
+    find_changed_members, \
+    find_import, \
+    ObjectNameExtractor, \
+    ImportModuleNameExtractor
 
 import os
-import re
 from ast import parse
 from importlib import import_module
 from git import Repo
-from git.exc import InvalidGitRepositoryError
 
 
 def pytest_addoption(parser):
@@ -51,7 +55,6 @@ def smart_collect(request):
     return request.config.option.smart_collect
 
 
-@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
     ignore_source = config.option.ignore_source
@@ -63,10 +66,7 @@ def pytest_collection_modifyitems(config, items):
     logger = getLogger()
     logger.setLevel(log_level)
 
-    # later we'll use the lf plugin state to determine whether or not to run tests that failed in the last run (highly recommended)
-    # lf_plugin = config.pluginmanager.get_plugin('lfplugin')
-    # if lf_plugin is None or not lf_plugin.active:
-    #     logger.warning("lastfailed plugin not active -- the only tests that will be collected on this run are those that were changed according to git.  It is recommended to add the --ff flag to ensure that the previously failed tests will run this time.")
+    # TODO: review compatibility with other plugins; fail if a plugin is found to be both active and incompatible
 
     coverage_plugin = config.pluginmanager.get_plugin('_cov')
     if coverage_plugin is None or not coverage_plugin.active:

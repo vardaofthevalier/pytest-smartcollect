@@ -91,6 +91,8 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
 def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfChangedFile:
     changed_files = {}
 
+    # currently this only calculates the diff between the tip of the branch and the previous commits specified in commit_range
+    # it might be useful in the future to add additional functionality for using diffs between the index and HEAD, between the working tree and HEAD, or between arbitrary commits
     current_head = repo.head.commit
     diffs = current_head.diff("HEAD~%d" % commit_range)
     diffs_with_patch = current_head.diff("HEAD~%d" % commit_range, create_patch=True)
@@ -148,6 +150,7 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfC
         else:  # something is seriously wrong...
             raise Exception("Unknown change type '%s'" % d.change_type)
 
+        # we only care about python files here
         if os.path.splitext(filepath)[-1] == ".py":
             if os.sep == "\\":
                 filepath = os.path.join(repo_path, filepath).replace('/', os.sep)
@@ -172,6 +175,7 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfC
 
 
 def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfString:
+    # find all changed members of changed_module
     changed_members = []
     name_extractor = ObjectNameExtractor()
 
@@ -180,13 +184,14 @@ def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfS
 
     total_lines = len(contents.split('\n'))
     module_ast = ast.parse(contents)
-    # direct_children = sorted(ast.iter_child_nodes(module_ast), key=lambda x: x.lineno)
     direct_children = list(ast.iter_child_nodes(module_ast))
 
+    # get a set of all changed lines in changed_module
     changed_lines = set()
     for ch in changed_module.changed_lines:
         changed_lines.update(set(ch))
 
+    # the direct children of the module correspond to the imported names in test files
     for idx, node in enumerate(direct_children):
         if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
             try:
@@ -209,6 +214,7 @@ def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfS
 
 
 def find_import(repo_root: str, module_path: str) -> ListOfString:
+    # in this function, we are looking for imports of the module specified by module_path in any python files under repo_root
     found = []
     module_name_extractor = ImportModuleNameExtractor()
 
