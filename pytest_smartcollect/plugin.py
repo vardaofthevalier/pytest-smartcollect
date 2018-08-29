@@ -184,6 +184,9 @@ def pytest_collection_modifyitems(config, items):
                         skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
                         test.add_marker(skip)
 
+                    else:
+                        logger.warning("Running test '%s'" % test.name)
+
                 else:
                     skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
                     test.add_marker(skip)
