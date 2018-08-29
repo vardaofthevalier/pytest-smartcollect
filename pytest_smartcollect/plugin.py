@@ -9,7 +9,6 @@ from ast import parse
 from importlib import import_module
 from git import Repo
 from git.exc import InvalidGitRepositoryError
-# from logging import getLogger
 
 
 def pytest_addoption(parser):
@@ -52,14 +51,26 @@ def smart_collect(request):
     return request.config.option.smart_collect
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
     ignore_source = config.option.ignore_source
     commit_range = config.option.commit_range
     allow_preemptive_failures = config.option.allow_preemptive_failures
+    log_level = config.option.log_level or 'WARNING'
 
     from logging import getLogger
     logger = getLogger()
+    logger.setLevel(log_level)
+
+    # later we'll use the lf plugin state to determine whether or not to run tests that failed in the last run (highly recommended)
+    # lf_plugin = config.pluginmanager.get_plugin('lfplugin')
+    # if lf_plugin is None or not lf_plugin.active:
+    #     logger.warning("lastfailed plugin not active -- the only tests that will be collected on this run are those that were changed according to git.  It is recommended to add the --ff flag to ensure that the previously failed tests will run this time.")
+
+    coverage_plugin = config.pluginmanager.get_plugin('_cov')
+    if coverage_plugin is None or not coverage_plugin.active:
+        logger.warning("Coverage plugin either not installed or not active -- changes to untested code will go completely unnoticed.  Try using the coverage plugin to identify these gaps.")
 
     if smart_collect:
         git_repo_root = find_git_repo_root(str(config.rootdir))
@@ -74,7 +85,6 @@ def pytest_collection_modifyitems(config, items):
         else:  # inspect the diff
             changed_files = find_changed_files(repo, git_repo_root, commit_range)
 
-        # TODO: configure overrides for paths to add in the INI file
         if len(ignore_source) > 0:
             filtered_changed_files = {}
             for k, v in changed_files.items():
@@ -85,6 +95,7 @@ def pytest_collection_modifyitems(config, items):
             changed_files = filtered_changed_files
 
         if len(changed_files) > 0:
+            logger.info("Found the following changed files: " + str(changed_files.keys()))
             for ch in changed_files.values():
                 # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
                 if ch.change_type == "D":
@@ -151,7 +162,12 @@ def pytest_collection_modifyitems(config, items):
             import_name_extractor = ImportModuleNameExtractor()
 
             for test in items:
+                if test.nodeid in config.cache.get("cache/lastfailed", {}):
+                    logger.warning("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
+                    continue
+
                 if test.get_marker('skip'):
+                    logger.info("Found skip marker on test '%s' -- SKIPPING" % test._nodeid)
                     continue
 
                 with open(str(test.fspath)) as f:
@@ -165,15 +181,17 @@ def pytest_collection_modifyitems(config, items):
                         m = import_module(imp)
 
                     except ImportError:
-                        raise Exception("Module '%s' was imported in test '%s', but the module is not installed in the environment" % (imp, test.name))
+                        raise Exception("Module '%s' was imported in test '%s', but the module is not installed in the environment" % (imp, test._nodeid))
 
                     if m.__file__ in changed_files.keys():
                         changed_members.extend(find_changed_members(changed_files[m.__file__], git_repo_root))
 
                 if len(changed_members) > 0:
+                    logger.info("Found the following changed members in test '%s': " % test._nodeid + str(changed_members))
                     test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and x.name == test.name else False, test_ast.body))[0]
 
                     used_names = name_extractor.extract(test_fn)
+                    logger.info("Test '%s' uses names: " % test._nodeid + str(used_names))
                     found_name = False
                     for name in used_names:
                         if name in changed_members:
@@ -181,17 +199,21 @@ def pytest_collection_modifyitems(config, items):
                             break
 
                     if not found_name:
-                        skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                        skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                         test.add_marker(skip)
 
                     else:
-                        logger.warning("Running test '%s'" % test.name)
+                        logger.warning("Selected test '%s' to run" % test._nodeid)
 
                 else:
-                    skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                    logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test._nodeid)
+                    skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                     test.add_marker(skip)
 
         else:
             for test in items:
-                skip = pytest.mark.skip(reason="Skipping: test doesn't touch new or modified code")
+                if test.nodeid in config.cache.get("cache/lastfailed", {}):
+                    logger.warning("Test '%s' failed on the last run, so will be run regardless of changes" % test._nodeid)
+                    continue
+                skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                 test.add_marker(skip)

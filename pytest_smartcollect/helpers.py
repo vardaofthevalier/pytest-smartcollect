@@ -149,10 +149,22 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfC
             raise Exception("Unknown change type '%s'" % d.change_type)
 
         if os.path.splitext(filepath)[-1] == ".py":
+            if os.sep == "\\":
+                filepath = os.path.join(repo_path, filepath).replace('/', os.sep)
+
+                if old_filepath is not None:
+                    old_filepath = os.path.join(repo_path, old_filepath).replace('/', os.sep)
+
+            else:
+                filepath = os.path.join(repo_path, filepath)
+
+                if old_filepath is not None:
+                    old_filepath = os.path.join(repo_path, old_filepath)
+
             changed_files[os.path.join(repo_path, filepath)] = ChangedFile(
                 d.change_type,
-                os.path.join(repo_path, filepath),
-                old_filepath=old_filepath if old_filepath is None else os.path.join(repo_path, old_filepath),
+                filepath,
+                old_filepath=old_filepath,
                 changed_lines=changed_lines
             )
 
@@ -164,22 +176,24 @@ def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfS
     name_extractor = ObjectNameExtractor()
 
     with open(os.path.join(repo_path, changed_module.current_filepath)) as f:
-        contents = f.readlines()
+        contents = f.read()
 
-    total_lines = len(contents)
-    module_ast = ast.parse('\n'.join(contents))
-    direct_children = sorted(ast.iter_child_nodes(module_ast), key=lambda x: x.lineno)
+    total_lines = len(contents.split('\n'))
+    module_ast = ast.parse(contents)
+    # direct_children = sorted(ast.iter_child_nodes(module_ast), key=lambda x: x.lineno)
+    direct_children = list(ast.iter_child_nodes(module_ast))
+
+    changed_lines = set()
+    for ch in changed_module.changed_lines:
+        changed_lines.update(set(ch))
+
     for idx, node in enumerate(direct_children):
         if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
-            if len(direct_children) < idx + 1:
+            try:
                 r = range(node.lineno, direct_children[idx + 1].lineno)
 
-            else:
+            except IndexError:
                 r = range(node.lineno, total_lines)
-
-            changed_lines = set()
-            for ch in changed_module.changed_lines:
-                changed_lines.update(set(ch))
 
             if set(changed_lines).intersection(set(r)):
                 if isinstance(node, ast.Assign):

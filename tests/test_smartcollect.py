@@ -12,6 +12,7 @@ if not os.environ.get('USERNAME'):
 # - test individual change types for diffs
 # - test different commit ranges
 # - test preemptive failures
+# - test interaction with lastfailed option
 
 
 def test_smart_collect_fixture(testdir):
@@ -381,6 +382,14 @@ def test_smartcollect(testdir):
     result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
 
     assert result.ret != 0
+
+    # test the lastfailed functionality -- test_hello should still fail, but it should also still run even though changes to hello.py didn't occur
+    result = testdir.runpytest("--smart-collect")
+
+    result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
+
+    assert result.ret != 0
+
 
 
 
