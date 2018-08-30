@@ -67,6 +67,7 @@ def pytest_collection_modifyitems(config, items):
     logger = getLogger()
     logger.setLevel(log_level)
 
+    # TODO: run brand new tests regardless of whether or not they touch changed code
     # TODO: review compatibility with other plugins; fail if a plugin is found to be both active and incompatible
 
     coverage_plugin = config.pluginmanager.get_plugin('_cov')
