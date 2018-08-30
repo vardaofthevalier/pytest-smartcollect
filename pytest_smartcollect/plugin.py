@@ -55,6 +55,7 @@ def smart_collect(request):
     return request.config.option.smart_collect
 
 
+@pytest.hookimpl(trylast=True) # I don't want to interfere with the functionality of other plugins that might implement this hook
 def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
     ignore_source = config.option.ignore_source

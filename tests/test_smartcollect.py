@@ -10,9 +10,8 @@ if not os.environ.get('USERNAME'):
 # TODO: new test cases:
 # - test commits < 2, test commits >= 2
 # - test individual change types for diffs
-# - test different commit ranges
+# - test different commit ranges (also: need to consider what might happen if invalid integer values are passed in)
 # - test preemptive failures
-# - test interaction with lastfailed option
 
 
 def test_smart_collect_fixture(testdir):
