@@ -55,6 +55,7 @@ From within a valid git repository, run the following command to run smart colle
 
     $ pytest --smart-collect [--commit-range <INTEGER>] [--ignore-source <PATH>] [--allow-preemptive-failures]
 
+:Options:
 --smart-collect  Activates pytest-smartcollect
 --commit-range  Specifies the number of commits before HEAD for calculating a diff.  Default is 1.
 --ignore-source  Specifies a filepath within the git repo that should be ignored during smart collection.  Multiple instances of this flag are supported.
