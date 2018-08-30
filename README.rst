@@ -18,7 +18,7 @@ pytest-smartcollect
     :target: https://ci.appveyor.com/project/vardaofthevalier/pytest-smartcollect/branch/master
     :alt: See Build Status on AppVeyor
 
-A pytest plugin for testing code changes calculated using information from `git diff`.
+A pytest plugin for testing code changes calculated using information from the output of :bash:`git diff`.
 
 ----
 
@@ -55,15 +55,15 @@ From within a valid git repository, run the following command to run smart colle
 
     $ pytest --smart-collect [--commit-range <INTEGER>] [--ignore-source <PATH>] [--allow-preemptive-failures]
 
-    Options:
-        --smart-collect Activates pytest-smartcollect
-        --commit-range Specifies the number of commits before HEAD for calculating a diff.  Default is 1.
-        --ignore-source Specifies a filepath within the git repo that should be ignored during smart collection.  Multiple instances of this flag are supported.
-        --allow-preemptive-failures Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project.  If unset, warning messages will be logged only.
+Options:
+--smart-collect  Activates pytest-smartcollect
+--commit-range  Specifies the number of commits before HEAD for calculating a diff.  Default is 1.
+--ignore-source  Specifies a filepath within the git repo that should be ignored during smart collection.  Multiple instances of this flag are supported.
+--allow-preemptive-failures  Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project.  If unset, warning messages will be logged only.
 
-If --rootdir is unset, rootdir is assumed to be the current working directory from where the command was run.
-
-Setting --log-level=INFO will print additional information about skipped tests.
+Notes:
+* If --rootdir is unset, rootdir is assumed to be the current working directory from where the command was run.
+* Setting --log-level=INFO will print additional information about skipped tests.
 
 Contributing
 ------------
