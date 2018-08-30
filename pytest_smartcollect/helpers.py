@@ -88,29 +88,34 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
     return all_files
 
 
-def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfChangedFile:
-    changed_files = {}
+def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> (DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile):
+    changed_files = {
+        'A': {},
+        'M': {},
+        'D': {},
+        'R': {},
+        'T': {}
+    }
 
     # currently this only calculates the diff between the tip of the branch and the previous commits specified in commit_range
     # it might be useful in the future to add additional functionality for using diffs between the index and HEAD, between the working tree and HEAD, or between arbitrary commits
     current_head = repo.head.commit
-    diffs = current_head.diff("HEAD~%d" % commit_range)
-    diffs_with_patch = current_head.diff("HEAD~%d" % commit_range, create_patch=True)
+    previous_commit = repo.commit("HEAD~%d" % commit_range)
+    diffs = previous_commit.diff(current_head)
+    diffs_with_patch = previous_commit.diff(current_head, create_patch=True)
 
     for idx, d in enumerate(diffs):
-        assert d.a_path == diffs_with_patch[idx].a_path
-
         diff_lines_spec = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
         changed_lines = None
         old_filepath = None
 
         if d.change_type == 'A':  # added paths
-            filepath = d.a_path
+            filepath = os.path.join(repo_path, d.a_path)
             with open(filepath) as f:
-                changed_lines = list(range(1, len(f.readlines())))
+                changed_lines = [range(1, len(f.readlines()))]
 
         elif d.change_type == 'M':  # modified paths
-            filepath = d.a_path
+            filepath = os.path.join(repo_path, d.a_path)
             ranges = diff_lines_spec.split(' ')
             if len(ranges) < 2:
                 start, count = ranges[0].split(',')
@@ -138,14 +143,19 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfC
                 ]
 
         elif d.change_type == 'D':  # deleted paths
-            filepath = d.a_path
+            filepath = os.path.join(repo_path, d.a_path)
 
         elif d.change_type == 'R':  # renamed paths
-            filepath = d.b_path
-            old_filepath = d.a_path
+            filepath = os.path.join(repo_path, d.b_path)
+            old_filepath = os.path.join(repo_path, d.a_path)
+            with open(filepath) as f:
+                changed_lines = [range(1, len(f.readlines()))]
 
         elif d.change_type == 'T':  # changed file types
-            filepath = d.b_rawpath
+            filepath = os.path.join(repo_path, d.b_rawpath)
+            old_filepath = os.path.join(repo_path, d.a_path)
+            with open(filepath) as f:
+                changed_lines = [range(1, len(f.readlines()))]
 
         else:  # something is seriously wrong...
             raise Exception("Unknown change type '%s'" % d.change_type)
@@ -153,25 +163,33 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> DictOfC
         # we only care about python files here
         if os.path.splitext(filepath)[-1] == ".py":
             if os.sep == "\\":
-                filepath = os.path.join(repo_path, filepath).replace('/', os.sep)
+                filepath = filepath.replace('/', os.sep)
 
                 if old_filepath is not None:
-                    old_filepath = os.path.join(repo_path, old_filepath).replace('/', os.sep)
+                    old_filepath = old_filepath.replace('/', os.sep)
 
-            else:
-                filepath = os.path.join(repo_path, filepath)
-
-                if old_filepath is not None:
-                    old_filepath = os.path.join(repo_path, old_filepath)
-
-            changed_files[os.path.join(repo_path, filepath)] = ChangedFile(
+            changed_files[d.change_type][filepath] = ChangedFile(
                 d.change_type,
                 filepath,
                 old_filepath=old_filepath,
                 changed_lines=changed_lines
             )
 
-    return changed_files
+    return changed_files['A'], changed_files['M'], changed_files['D'], changed_files['R'], changed_files['T']
+
+
+def filter_ignore_sources(changed_files: DictOfChangedFile, ignore_source: ListOfString) -> DictOfChangedFile:
+    if len(ignore_source) > 0:
+        filtered_changed_files = {}
+        for k, v in changed_files.items():
+            for y in ignore_source:
+                if os.path.commonpath([v.current_filepath, y]) != y:
+                    filtered_changed_files[k] = v
+
+        return filtered_changed_files
+
+    else:
+        return changed_files
 
 
 def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfString:
@@ -260,6 +278,10 @@ def find_fully_qualified_module_name(path: str) -> str:
         path = os.path.dirname(path)
 
     return ".".join(parts)
+
+
+def skip_item(item):
+    pass
 
 
 

@@ -176,9 +176,13 @@ def test_find_changed_files(testdir):
             repo = Repo(repo_path)
             assert len(list(repo.iter_commits('HEAD'))) == 2
             from pytest_smartcollect.helpers import find_changed_files
-            cf = find_changed_files(Repo(repo_path), repo_path, 1)
-            assert len(cf) == 1
-            assert r"%s" in cf.keys()
+            a, m, d, r, t = find_changed_files(Repo(repo_path), repo_path, 1)
+            assert len(m) == 1
+            assert len(a) == 0
+            assert len(d) == 0 
+            assert len(r) == 0
+            assert len(t) == 0
+            assert r"%s" in m.keys()
     """ % (temp_repo_folder, os.path.join(temp_repo_folder, "foo.py")))
 
     result = testdir.runpytest()
@@ -213,8 +217,8 @@ def test_find_changed_members(testdir):
             repo_path = r"%s"
             repo = Repo(repo_path)
             from pytest_smartcollect.helpers import find_changed_files, find_changed_members
-            cf = find_changed_files(Repo(repo_path), repo_path, 1)
-            cm = find_changed_members(list(cf.values())[-1], repo_path)
+            _, m, _, _, _= find_changed_files(Repo(repo_path), repo_path, 1)
+            cm = find_changed_members(list(m.values())[-1], repo_path)
             assert len(cm) == 1
             assert r"%s" in cm
     """ % (temp_repo_folder, "hello"))
