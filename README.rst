@@ -18,7 +18,7 @@ pytest-smartcollect
     :target: https://ci.appveyor.com/project/vardaofthevalier/pytest-smartcollect/branch/master
     :alt: See Build Status on AppVeyor
 
-A pytest plugin for testing code changes calculated using information from the output of :bash:`git diff`.
+A pytest plugin for testing code changes calculated using information from the output of ``git diff``.
 
 ----
 
@@ -51,9 +51,10 @@ You can install "pytest-smartcollect" via `pip`_ from `PyPI`_::
 Usage
 -----
 
-From within a valid git repository, run the following command to run smart collection:
+From within a valid git repository, run the following command to run smart collection::
 
     $ pytest --smart-collect [--commit-range <INTEGER>] [--ignore-source <PATH>] [--allow-preemptive-failures]
+
 
 Options:
 --smart-collect  Activates pytest-smartcollect
@@ -61,9 +62,11 @@ Options:
 --ignore-source  Specifies a filepath within the git repo that should be ignored during smart collection.  Multiple instances of this flag are supported.
 --allow-preemptive-failures  Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project.  If unset, warning messages will be logged only.
 
+
 Notes:
 * If --rootdir is unset, rootdir is assumed to be the current working directory from where the command was run.
 * Setting --log-level=INFO will print additional information about skipped tests.
+
 
 Contributing
 ------------
