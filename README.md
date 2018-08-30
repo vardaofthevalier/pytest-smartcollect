@@ -1,14 +1,4 @@
----
-title: 'pytest-smartcollect'
----
-
-[![PyPI version](https://img.shields.io/pypi/v/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
-
-[![Python versions](https://img.shields.io/pypi/pyversions/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
-
-[![See Build Status on Travis CI](https://travis-ci.org/vardaofthevalier/pytest-smartcollect.svg?branch=master)](https://travis-ci.org/vardaofthevalier/pytest-smartcollect)
-
-[![See Build Status on AppVeyor](https://ci.appveyor.com/api/projects/status/github/vardaofthevalier/pytest-smartcollect?branch=master)](https://ci.appveyor.com/project/vardaofthevalier/pytest-smartcollect/branch/master)
+# pytest-smartcollect
 
 A pytest plugin for testing code changes calculated using information
 from the output of `git diff`.
