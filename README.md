@@ -55,7 +55,8 @@ smart collection:
 | Option Name | Option Description |
 | ----------- | ------------------ |
 | --smart-collect | Activates pytest-smartcollect |
-| --commit-range | Specifies the number of commits before HEAD for calculating a diff. Default is 1. |
+| --diff-current-head-with-branch | Specifies the branch to diff the current HEAD with. Default is 'master' |
+| --commit-range | Specifies the number of commits before the head of the branch specified with --diff-current-head-with-branch for calculating a diff. Default is 0. |
 | --ignore-source | Specifies a filepath within the git repo that should be ignored during smart collection. Multiple instances of this flag are supported. |
 | --allow-preemptive-failures | Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project. If unset, warning messages will be logged only. |
 
@@ -64,6 +65,22 @@ smart collection:
     directory from where the command was run.
 -   Setting --log-level=INFO will print additional information about
     skipped tests.
+    
+Usage Examples
+==============
+
+```bash
+# enter your repo
+cd my_git_repo
+git checkout master
+git checkout -b my_new_branch
+# ... make some changes on my_new_branch
+# Add and commit changes on my_new_branch
+git add -A
+git commit -m "Wow, these are great changes!"
+# Run smart collection to test only the changes you made.  The command below will diff the head of the currently checked out branch with the master branch by default.
+pytest --smart-collect
+```
 
 Contributing
 ============
