@@ -176,7 +176,7 @@ def test_find_changed_files(testdir):
             repo = Repo(repo_path)
             assert len(list(repo.iter_commits('HEAD'))) == 2
             from pytest_smartcollect.helpers import find_changed_files
-            a, m, d, r, t = find_changed_files(Repo(repo_path), repo_path, 1)
+            a, m, d, r, t = find_changed_files(Repo(repo_path), repo_path, 'master', 1)
             assert len(m) == 1
             assert len(a) == 0
             assert len(d) == 0 
@@ -217,7 +217,7 @@ def test_find_changed_members(testdir):
             repo_path = r"%s"
             repo = Repo(repo_path)
             from pytest_smartcollect.helpers import find_changed_files, find_changed_members
-            _, m, _, _, _= find_changed_files(Repo(repo_path), repo_path, 1)
+            _, m, _, _, _= find_changed_files(Repo(repo_path), repo_path, 'master', 1)
             cm = find_changed_members(list(m.values())[-1], repo_path)
             assert len(cm) == 1
             assert r"%s" in cm
@@ -368,7 +368,7 @@ def test_smartcollect(testdir):
     r.index.add(["hello.py", "goodbye.py"])
     r.index.commit("initial commit")
 
-    result = testdir.runpytest("--smart-collect")
+    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
 
     result.stdout.fnmatch_lines(["*2 passed in * seconds*"])
 
@@ -380,14 +380,14 @@ def test_smartcollect(testdir):
     r.index.add(["hello.py"])
     r.index.commit("second commit")
 
-    result = testdir.runpytest("--smart-collect")
+    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
 
     result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
 
     assert result.ret != 0
 
     # test the lastfailed functionality -- test_hello should still fail, but it should also still run even though changes to hello.py didn't occur
-    result = testdir.runpytest("--smart-collect")
+    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
 
     result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
 

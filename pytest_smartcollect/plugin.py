@@ -37,10 +37,17 @@ def pytest_addoption(parser):
     group.addoption(
         '--commit-range',
         action='store',
-        default=1,
+        default=0,
         type=int,
         dest='commit_range',
-        help='The number of commits before the HEAD commit to use when calculating diffs for smart collection. Default is 1'
+        help='The number of commits before the HEAD commit of the diffed branch (specified with option --diff-current-head-with-branch) to use when calculating diffs for smart collection. Default is 0'
+    )
+    group.addoption(
+        '--diff-current-head-with-branch',
+        action='store',
+        default='master',
+        dest='diff_current_head_with_branch',
+        help='The branch to diff the currently checked out head with. Default is "master".'
     )
     group.addoption(
         '--allow-preemptive-failures',
@@ -61,6 +68,7 @@ def pytest_collection_modifyitems(config, items):
     smart_collect = config.option.smart_collect
     ignore_source = config.option.ignore_source
     commit_range = config.option.commit_range
+    diff_current_head_with_branch = config.option.diff_current_head_with_branch
     allow_preemptive_failures = config.option.allow_preemptive_failures
     log_level = config.option.log_level or 'WARNING'
 
@@ -89,7 +97,7 @@ def pytest_collection_modifyitems(config, items):
             changed_filetype_files = {}
 
         else:  # inspect the diff
-            added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = find_changed_files(repo, git_repo_root, commit_range)
+            added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = find_changed_files(repo, git_repo_root, diff_current_head_with_branch, commit_range)
 
         # search for a few problems preemptively
         for deleted in deleted_files.values():

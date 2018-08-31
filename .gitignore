@@ -75,3 +75,6 @@ target/
 # IDE files
 .idea/
 
+# other
+README.rst
+

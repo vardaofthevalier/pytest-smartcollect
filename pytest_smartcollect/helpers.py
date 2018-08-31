@@ -88,7 +88,7 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
     return all_files
 
 
-def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> (DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile):
+def find_changed_files(repo: Repo, repo_path: str, diff_current_head_with_branch: str, commit_range: int) -> (DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile, DictOfChangedFile):
     changed_files = {
         'A': {},
         'M': {},
@@ -100,9 +100,9 @@ def find_changed_files(repo: Repo, repo_path: str, commit_range: int) -> (DictOf
     # currently this only calculates the diff between the tip of the branch and the previous commits specified in commit_range
     # it might be useful in the future to add additional functionality for using diffs between the index and HEAD, between the working tree and HEAD, or between arbitrary commits
     current_head = repo.head.commit
-    previous_commit = repo.commit("HEAD~%d" % commit_range)
-    diffs = previous_commit.diff(current_head)
-    diffs_with_patch = previous_commit.diff(current_head, create_patch=True)
+    previous_commits = repo.commit("%s~%d" % (diff_current_head_with_branch, commit_range))
+    diffs = previous_commits.diff(current_head)
+    diffs_with_patch = previous_commits.diff(current_head, create_patch=True)
 
     for idx, d in enumerate(diffs):
         diff_lines_spec = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
