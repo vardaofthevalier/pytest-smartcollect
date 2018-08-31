@@ -78,9 +78,9 @@ def pytest_collection_modifyitems(config, items):
 
     # TODO: review compatibility with other plugins; fail if a plugin is found to be both active and incompatible
 
-    coverage_plugin = config.pluginmanager.get_plugin('_cov')
-    if coverage_plugin is None or not coverage_plugin.active:
-        logger.warning("Coverage plugin either not installed or not active -- changes to untested code will go completely unnoticed.  Try using the coverage plugin to identify these gaps.")
+    # coverage_plugin = config.pluginmanager.get_plugin('_cov')
+    # if coverage_plugin is None or not coverage_plugin.active:
+    #     logger.warning("Coverage plugin either not installed or not active -- changes to untested code will go completely unnoticed.  Try using the coverage plugin to identify these gaps.")
 
     if smart_collect:
         git_repo_root = find_git_repo_root(str(config.rootdir))
