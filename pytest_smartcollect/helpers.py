@@ -1,4 +1,5 @@
 import io
+import re
 import os
 import sys
 import ast
@@ -105,13 +106,16 @@ def find_changed_files(repo: Repo, repo_path: str, diff_current_head_with_branch
     diffs_with_patch = previous_commits.diff(current_head, create_patch=True)
 
     for idx, d in enumerate(diffs):
-        diff_lines_spec = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '').split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
+        diff_text = diffs_with_patch[idx].diff.decode('utf-8').replace('\r', '')
+        if re.match('^Binary files.*', diff_text) or len(diff_text) == 0:
+            continue
+        diff_lines_spec = diff_text.split('\n')[0].split('@@')[1].strip().replace('+', '').replace('-', '')
         changed_lines = None
         old_filepath = None
 
         if d.change_type == 'A':  # added paths
             filepath = os.path.join(repo_path, d.a_path)
-            with open(filepath) as f:
+            with open(filepath, encoding='utf-8') as f:
                 changed_lines = [range(1, len(f.readlines()))]
 
         elif d.change_type == 'M':  # modified paths
@@ -148,13 +152,13 @@ def find_changed_files(repo: Repo, repo_path: str, diff_current_head_with_branch
         elif d.change_type == 'R':  # renamed paths
             filepath = os.path.join(repo_path, d.b_path)
             old_filepath = os.path.join(repo_path, d.a_path)
-            with open(filepath) as f:
+            with open(filepath, encoding='utf-8') as f:
                 changed_lines = [range(1, len(f.readlines()))]
 
         elif d.change_type == 'T':  # changed file types
             filepath = os.path.join(repo_path, d.b_rawpath)
             old_filepath = os.path.join(repo_path, d.a_path)
-            with open(filepath) as f:
+            with open(filepath, encoding='utf-8') as f:
                 changed_lines = [range(1, len(f.readlines()))]
 
         else:  # something is seriously wrong...

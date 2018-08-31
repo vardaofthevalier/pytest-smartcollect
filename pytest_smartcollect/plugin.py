@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import re
 import pytest
 from pytest_smartcollect.helpers import find_git_repo_root, \
     find_all_files, \
@@ -219,7 +219,7 @@ def pytest_collection_modifyitems(config, items):
 
                 if len(changed_members) > 0:
                     logger.info("Found the following changed members in test '%s': " % test.nodeid + str(changed_members))
-                    test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and x.name == test.name else False, test_ast.body))[0]
+                    test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and re.match('^%s.*' % x.name, test.name) else False, test_ast.body))[0]
 
                     used_names = name_extractor.extract(test_fn)
                     logger.info("Test '%s' uses names: " % test.nodeid + str(used_names))
