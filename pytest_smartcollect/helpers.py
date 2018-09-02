@@ -1,4 +1,3 @@
-import io
 import re
 import os
 import sys
@@ -6,7 +5,6 @@ import ast
 import typing
 from git import Repo
 from importlib import import_module
-from contextlib import redirect_stdout
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
@@ -27,14 +25,12 @@ DictOfChangedFile = typing.Dict[str, ChangedFile]
 class GenericVisitor(ast.NodeVisitor):
     def __init__(self):
         super(GenericVisitor, self).__init__()
+        self.cache = []
 
-    def extract(self, node) -> ListOfString:
-        f = io.StringIO()
-
-        with redirect_stdout(f):
-            self.generic_visit(node)
-
-        return list(filter(lambda x: True if x != '' else False, f.getvalue().strip().split('\n')))
+    def extract(self, node) -> list:
+        self.cache.clear()
+        self.generic_visit(node)
+        return self.cache
 
 
 class ObjectNameExtractor(GenericVisitor):
@@ -43,9 +39,20 @@ class ObjectNameExtractor(GenericVisitor):
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name):
-            print(node.func.id)
+            self.cache.append(node.func.id)
 
         self.generic_visit(node)
+
+
+class DefinitionNodeExtractor(GenericVisitor):
+    def __init__(self):
+        super(DefinitionNodeExtractor, self).__init__()
+
+    def visit_FunctionDef(self, node):
+        self.cache.append(node)
+
+    def visit_ClassDef(self, node):
+        self.cache.append(node)
 
 
 class ImportModuleNameExtractor(GenericVisitor):
@@ -53,11 +60,16 @@ class ImportModuleNameExtractor(GenericVisitor):
         super(ImportModuleNameExtractor, self).__init__()
 
     def visit_Import(self, node):
-        print(node.names[0].name)
+        imp = import_module(node.names[0].name)
+        self.cache.append((node.names[0].name, ['%s.%s' % (node.names[0].name, x) for x in dir(imp)]))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
-        print(node.module)
+        names = list(map(lambda x: x.name, node.names))
+        if '*' in names:
+            imp = import_module(node.name)
+            names = dir(imp)
+        self.cache.append((node.module, names))
 
 
 def find_git_repo_root(dir: str) -> str:
@@ -286,6 +298,62 @@ def find_fully_qualified_module_name(path: str) -> str:
 
 def skip_item(item):
     pass
+
+
+def dependencies_changed(path, object_name, change_map):
+    if path in change_map.keys() and object_name in change_map[path]:
+        return True
+
+    module_ast = ast.parse(path)
+
+    # extract imports
+    imported_names_and_modules = {}
+    imne = ImportModuleNameExtractor()
+    extracted_imports = imne.extract(module_ast)
+
+    for module_name, imported_names in extracted_imports:
+        if module_name in sys.builtin_module_names:
+            continue
+
+        i = import_module(module_name)
+
+        for imported_name in imported_names:
+            if imported_name in imported_names_and_modules.keys() and i.__file__ not in imported_names_and_modules[imported_name]:
+                imported_names_and_modules[imported_name].append(i.__file__)
+
+            else:
+                imported_names_and_modules[imported_name] = [i.__file__]
+
+    # extract the object of interest from the ast
+    definition_node_extractor = DefinitionNodeExtractor()
+    definitions = definition_node_extractor.extract(module_ast)
+    obj = None
+    for d in definitions:
+        if d.name == object_name:
+            obj = d
+            break
+
+    if obj is None:
+        raise Exception("Member '%s' not defined in module '%s'" % (object_name, path))
+
+    # extract call objects from obj
+    object_name_extractor = ObjectNameExtractor()
+    used_names = object_name_extractor.extract(obj)
+    for name in used_names:
+        if name in imported_names_and_modules.keys():
+            for module_path in imported_names_and_modules[name]:
+                if dependencies_changed(module_path, name, change_map):
+                    if module_path in change_map.keys():
+                        change_map[module_path].append(name)
+                    else:
+                        change_map[module_path] = [name]
+
+                    return True
+
+                else:
+                    return False
+
+
 
 
 

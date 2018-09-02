@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import re
 import pytest
 from pytest_smartcollect.helpers import find_git_repo_root, \
     find_all_files, \
@@ -7,12 +6,9 @@ from pytest_smartcollect.helpers import find_git_repo_root, \
     find_changed_files, \
     find_changed_members, \
     find_import, \
-    ObjectNameExtractor, \
-    ImportModuleNameExtractor
+    dependencies_changed
 
 import os
-from ast import parse
-from importlib import import_module
 from git import Repo
 
 
@@ -77,10 +73,6 @@ def pytest_collection_modifyitems(config, items):
     logger.setLevel(log_level)
 
     # TODO: review compatibility with other plugins; fail if a plugin is found to be both active and incompatible
-
-    # coverage_plugin = config.pluginmanager.get_plugin('_cov')
-    # if coverage_plugin is None or not coverage_plugin.active:
-    #     logger.warning("Coverage plugin either not installed or not active -- changes to untested code will go completely unnoticed.  Try using the coverage plugin to identify these gaps.")
 
     if smart_collect:
         git_repo_root = find_git_repo_root(str(config.rootdir))
@@ -196,51 +188,8 @@ def pytest_collection_modifyitems(config, items):
                 logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
                 continue
 
-            # use the AST of the test to determine which things it imports and/or uses
-            with open(str(test.fspath)) as f:
-                test_ast = parse(f.read())
-
-            if len(changed_files) > 0:
-                name_extractor = ObjectNameExtractor()
-                import_name_extractor = ImportModuleNameExtractor()
-
-                imports = import_name_extractor.extract(test_ast)
-                changed_members = []
-
-                for imp in imports:
-                    try:
-                        m = import_module(imp)
-
-                    except ImportError:
-                        raise Exception("Module '%s' was imported in test '%s', but the module is not installed in the environment" % (imp, test.nodeid))
-
-                    if m.__file__ in changed_files.keys():
-                        changed_members.extend(find_changed_members(changed_files[m.__file__], git_repo_root))
-
-                if len(changed_members) > 0:
-                    logger.info("Found the following changed members in test '%s': " % test.nodeid + str(changed_members))
-                    test_fn = list(filter(lambda x: True if x.__class__.__name__ == "FunctionDef" and re.match('^%s.*' % x.name, test.name) else False, test_ast.body))[0]
-
-                    used_names = name_extractor.extract(test_fn)
-                    logger.info("Test '%s' uses names: " % test.nodeid + str(used_names))
-                    found_name = False
-                    for name in used_names:
-                        if name in changed_members:
-                            found_name = True
-                            break
-
-                    if not found_name:
-                        logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
-                        skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
-                        test.add_marker(skip)
-
-                    else:
-                        logger.warning("Selected test '%s' to run" % test.nodeid)
-
-                else:
-                    logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
-                    skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
-                    test.add_marker(skip)
+            if dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_files):  # TODO: figure out a better way to handle test names of parameterized tests
+                continue
 
             else:
                 logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
