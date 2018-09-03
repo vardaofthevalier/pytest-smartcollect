@@ -1,15 +1,6 @@
 # -*- coding: utf-8 -*-
 import pytest
-from pytest_smartcollect.helpers import find_git_repo_root, \
-    find_all_files, \
-    filter_ignore_sources, \
-    find_changed_files, \
-    find_changed_members, \
-    find_import, \
-    dependencies_changed
-
-import os
-from git import Repo
+from pytest_smartcollect.helpers import run_smart_collection
 
 
 def pytest_addoption(parser):
@@ -75,123 +66,13 @@ def pytest_collection_modifyitems(config, items):
     # TODO: review compatibility with other plugins; fail if a plugin is found to be both active and incompatible
 
     if smart_collect:
-        git_repo_root = find_git_repo_root(str(config.rootdir))
-
-        repo = Repo(git_repo_root)
-
-        total_commits_on_head = len(list(repo.iter_commits("HEAD")))
-
-        if total_commits_on_head < 2:
-            added_files = find_all_files(git_repo_root)
-            modified_files = {}
-            deleted_files = {}
-            renamed_files = {}
-            changed_filetype_files = {}
-
-        else:  # inspect the diff
-            added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = find_changed_files(repo, git_repo_root, diff_current_head_with_branch, commit_range)
-
-        # search for a few problems preemptively
-        for deleted in deleted_files.values():
-            # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
-            try:
-                found = find_import(str(config.rootdir), deleted.current_filepath)
-
-            except Exception as e:
-                if allow_preemptive_failures:
-                    raise e
-
-                else:
-                    logger.warning(str(e))
-
-            else:
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from deleted file '%s' imported in file '%s'\n" % (deleted.current_filepath, f)
-
-                    if allow_preemptive_failures:
-                        raise Exception(msg)
-
-                    logger.warning(msg)
-
-        for renamed in renamed_files.values():
-            # check if any renamed files are imported by their old name
-            try:
-                found = find_import(str(config.rootdir), renamed.old_filepath)
-
-            except Exception as e:
-                if allow_preemptive_failures:
-                    raise e
-
-                else:
-                    logger.warning(str(e))
-
-            else:
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (
-                            renamed.old_filepath, renamed.current_filepath, f)
-
-                    if allow_preemptive_failures:
-                        raise Exception(msg)
-
-                    logger.warning(msg)
-
-        changed_to_py = {}
-        for changed_filetype in changed_filetype_files.values():
-            # check if any files that changed type from python to something else are still being imported somewhere else in the project
-            if os.path.splitext(changed_filetype.old_filepath)[-1] == ".py":
-                found = find_import(str(config.rootdir), changed_filetype.old_filepath)
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from renamed file ('%s' -> '%s') no longer exists but is imported in file '%s'\n)" % (
-                            changed_filetype.old_filepath, changed_filetype.current_filepath, f)
-
-                    if allow_preemptive_failures:
-                        raise Exception(msg)
-
-                    logger.warning(msg)
-
-            elif os.path.splitext(changed_filetype.current_filepath) == ".py":
-                changed_to_py[changed_filetype.current_filepath] = changed_filetype
-
-        changed_files = {}
-        changed_files.update(changed_to_py)
-        changed_files.update(modified_files)
-        changed_files.update(renamed_files)
-        changed_files.update(added_files)
-
-        # ignore anything explicitly set in --ignore-source flags
-        changed_files = filter_ignore_sources(changed_files, ignore_source)
-
-        for test in items:
-            # if the test is new, run it anyway
-            if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
-                logger.warning("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
-                continue
-
-            # if the test is changed, run it anyway
-            elif str(test.fspath) in changed_files.keys() and test.name in find_changed_members(changed_files[str(test.fspath)], git_repo_root):
-                logger.warning("Test '%s' is changed, so will be run regardless of changes to the code it tests" % test.nodeid)
-                continue
-
-            # if the test failed in the last run, run it anyway
-            if test.nodeid in config.cache.get("cache/lastfailed", {}):
-                logger.warning("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
-                continue
-
-            # if the test is already skipped, just ignore it
-            if test.get_marker('skip'):
-                logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
-                continue
-
-            if dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_files):  # TODO: figure out a better way to handle test names of parameterized tests
-                continue
-
-            else:
-                logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
-                skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
-                test.add_marker(skip)
+        run_smart_collection(
+            str(config.rootdir),
+            items,
+            config.cache.get("cache/lastfailed", {}),
+            ignore_source,
+            commit_range,
+            diff_current_head_with_branch,
+            allow_preemptive_failures,
+            logger
+        )

@@ -2,14 +2,17 @@ import re
 import os
 import sys
 import ast
+import pytest
 import typing
+import logging
 from git import Repo
 from importlib import import_module
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
 ListOfString = typing.List[str]
-
+DictOfListOfString = typing.Dict[str, ListOfString]
+ListOfTestItem = typing.List[pytest.Item]
 
 class ChangedFile(object):
     def __init__(self, change_type: str, current_filepath: str, old_filepath: StrOrNone=None, changed_lines: ListOrNone=None):
@@ -258,7 +261,7 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
                 with open(os.path.join(root, f)) as g:
                     a = ast.parse(g.read())
 
-                for module in module_name_extractor.extract(a):
+                for (module, _) in module_name_extractor.extract(a):
                     # determine whether or not the module is part of the standard library
                     if module in sys.builtin_module_names:
                         continue
@@ -296,15 +299,30 @@ def find_fully_qualified_module_name(path: str) -> str:
     return ".".join(parts)
 
 
-def skip_item(item):
-    pass
-
-
-def dependencies_changed(path, object_name, change_map):
+def dependencies_changed(path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
     if path in change_map.keys() and object_name in change_map[path]:
+        chain.insert(0, "%s::%s" % (path, object_name))
         return True
 
-    module_ast = ast.parse(path)
+    with open(path) as f:
+        module_ast = ast.parse(f.read())
+
+    # find locally changed members
+    locally_changed = []
+    if path in change_map.keys():
+        locally_changed = change_map[path]
+
+    # find the object of interest in the ast
+    obj = None
+    for child in ast.iter_child_nodes(module_ast):
+        if isinstance(child, ast.FunctionDef) or isinstance(child, ast.ClassDef) and child.name == object_name:
+            obj = child
+
+        else:
+            continue
+
+    if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
+        return False
 
     # extract imports
     imported_names_and_modules = {}
@@ -324,34 +342,159 @@ def dependencies_changed(path, object_name, change_map):
             else:
                 imported_names_and_modules[imported_name] = [i.__file__]
 
-    # extract the object of interest from the ast
-    definition_node_extractor = DefinitionNodeExtractor()
-    definitions = definition_node_extractor.extract(module_ast)
-    obj = None
-    for d in definitions:
-        if d.name == object_name:
-            obj = d
-            break
-
-    if obj is None:
-        raise Exception("Member '%s' not defined in module '%s'" % (object_name, path))
-
     # extract call objects from obj
     object_name_extractor = ObjectNameExtractor()
     used_names = object_name_extractor.extract(obj)
+
     for name in used_names:
+        if name in locally_changed:
+            if path in change_map.keys() and name in change_map[path]:
+                chain.insert(0, "%s::%s" % (path, name))
+                return True
+
         if name in imported_names_and_modules.keys():
             for module_path in imported_names_and_modules[name]:
-                if dependencies_changed(module_path, name, change_map):
+                if dependencies_changed(module_path, name, change_map, chain):
                     if module_path in change_map.keys():
                         change_map[module_path].append(name)
                     else:
                         change_map[module_path] = [name]
 
+                    chain.insert(0, "%s::%s" % (module_path, name))
                     return True
 
                 else:
                     return False
+
+    return False
+
+
+def run_smart_collection(rootdir: str, items: ListOfTestItem, last_failed: ListOfString, ignore_source: ListOfString, commit_range: int, diff_current_head_with_branch: str, allow_preemptive_failures: bool, logger: logging.Logger):
+    git_repo_root = find_git_repo_root(rootdir)
+
+    repo = Repo(git_repo_root)
+
+    total_commits_on_head = len(list(repo.iter_commits("HEAD")))
+
+    if total_commits_on_head < 2:
+        added_files = find_all_files(git_repo_root)
+        modified_files = {}
+        deleted_files = {}
+        renamed_files = {}
+        changed_filetype_files = {}
+
+    else:  # inspect the diff
+        added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = find_changed_files(repo,
+                                                                                                               git_repo_root,
+                                                                                                               diff_current_head_with_branch,
+                                                                                                               commit_range)
+
+    # search for a few problems preemptively
+    for deleted in deleted_files.values():
+        # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
+        try:
+            found = find_import(rootdir, deleted.current_filepath)
+
+        except Exception as e:
+            if allow_preemptive_failures:
+                raise e
+
+            else:
+                logger.warning(str(e))
+
+        else:
+            if len(found) > 0:
+                msg = ""
+                for f in found:
+                    msg += "Module from deleted file '%s' imported in file '%s'\n" % (deleted.current_filepath, f)
+
+                if allow_preemptive_failures:
+                    raise Exception(msg)
+
+                logger.warning(msg)
+
+    for renamed in renamed_files.values():
+        # check if any renamed files are imported by their old name
+        try:
+            found = find_import(rootdir, renamed.old_filepath)
+
+        except Exception as e:
+            if allow_preemptive_failures:
+                raise e
+
+            else:
+                logger.warning(str(e))
+
+        else:
+            if len(found) > 0:
+                msg = ""
+                for f in found:
+                    msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (
+                        renamed.old_filepath, renamed.current_filepath, f)
+
+                if allow_preemptive_failures:
+                    raise Exception(msg)
+
+                logger.warning(msg)
+
+    changed_to_py = {}
+    for changed_filetype in changed_filetype_files.values():
+        # check if any files that changed type from python to something else are still being imported somewhere else in the project
+        if os.path.splitext(changed_filetype.old_filepath)[-1] == ".py":
+            found = find_import(rootdir, changed_filetype.old_filepath)
+            if len(found) > 0:
+                msg = ""
+                for f in found:
+                    msg += "Module from renamed file ('%s' -> '%s') no longer exists but is imported in file '%s'\n)" % (
+                        changed_filetype.old_filepath, changed_filetype.current_filepath, f)
+
+                if allow_preemptive_failures:
+                    raise Exception(msg)
+
+                logger.warning(msg)
+
+        elif os.path.splitext(changed_filetype.current_filepath) == ".py":
+            changed_to_py[changed_filetype.current_filepath] = changed_filetype
+
+    changed_files = {}
+    changed_files.update(changed_to_py)
+    changed_files.update(modified_files)
+    changed_files.update(renamed_files)
+    changed_files.update(added_files)
+
+    # ignore anything explicitly set in --ignore-source flags
+    changed_files = filter_ignore_sources(changed_files, ignore_source)
+
+    # determine all changed members of each of the changed files (if applicable)
+    changed_members_and_modules = {path: find_changed_members(ch, git_repo_root) for path, ch in changed_files.items() }
+
+    for test in items:
+        # if the test is new, run it anyway
+        if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
+            logger.warning("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
+            continue
+
+        # if the test failed in the last run, run it anyway
+        if test.nodeid in last_failed:
+            logger.warning("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
+            continue
+
+        # if the test is already skipped, just ignore it
+        if test.get_marker('skip'):
+            logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
+            continue
+
+        # otherwise, check the dependency chain
+        chain = []
+        if dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_members_and_modules, chain):  # TODO: figure out a better way to handle test names of parameterized tests
+            logger.warning(
+                "Test '%s' will run because one of it's dependencies changed (%s)" % (test.nodeid, ' -> '.join(chain)))
+            continue
+
+        else:
+            logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
+            skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
+            test.add_marker(skip)
 
 
 

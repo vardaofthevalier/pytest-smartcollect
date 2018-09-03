@@ -1,40 +1,88 @@
 # -*- coding: utf-8 -*-
 import os
-from shutil import rmtree, move
+import typing
+from importlib import import_module
+from _pytest.pytester import Testdir
+from coverage import Coverage
+from shutil import move
 from git import Repo
 from pip._internal import main as pip
 
 if not os.environ.get('USERNAME'):
     os.environ["USERNAME"] = "foo"
 
+smart_collect_source = os.path.dirname(import_module('pytest_smartcollect.plugin').__file__)
+coverage_files = []
+
 # TODO: new test cases:
-# - test commits < 2, test commits >= 2
 # - test individual change types for diffs
 # - test different commit ranges (also: need to consider what might happen if invalid integer values are passed in)
+# - test different diff targets
 # - test preemptive failures
+# - test_dependencies_changed (for coverage report)
+
+ListOfString = typing.List[str]
 
 
-def test_smart_collect_fixture(testdir):
-    testdir.makepyfile("""
-        def test_smart_collect_fixture(smart_collect):
-            assert smart_collect == True
+def _check_result(testdir: Testdir, pytest_args: ListOfString, match_lines: ListOfString, return_code_assert: typing.Callable, cover_sources=True):
+    if cover_sources:
+        default_pytest_args = ["--cov=%s" % smart_collect_source]
+        coverage_files.append(os.path.join(testdir.tmpdir.dirpath(), '.coverage'))
+
+    else:
+        default_pytest_args = []
+
+    pytest_args.extend(default_pytest_args)
+
+    result = testdir.runpytest(*pytest_args)
+
+    # fnmatch_lines does an assertion internally
+    result.stdout.fnmatch_lines(match_lines)
+
+    # make sure that that we get a '0' exit code for the testsuite
+    assert return_code_assert(result.ret)
+
+
+def test_source_not_repo(testdir):
+    _check_result(
+        testdir,
+        ["--smart-collect"],
+        [],
+        lambda x: x != 0,
+        cover_sources=False
+    )  # rootdir is not a git repo
+
+
+def test_zero_commits(testdir):
+    Repo.init('.')
+
+    _check_result(
+        testdir,
+        ["--smart-collect"],
+        [],
+        lambda x: x != 0,
+        cover_sources=False
+    )  # no commits == invalid repo
+
+
+def test_one_commit(testdir):
+    r = Repo.init('.')
+
+    testdir.makepyfile(test_foo="""
+        def test_foo():
+            print("foo")
     """)
 
-    result = testdir.runpytest(
-        "--smart-collect"
+    r.index.add(["test_foo.py"])
+    r.index.commit("first commit")
+
+    _check_result(
+        testdir,
+        ["--smart-collect"],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0,
+        cover_sources=False
     )
-
-
-# def test_zero_commits(testdir):
-#     pass
-#
-#
-# def test_one_commit(testdir):
-#     pass
-#
-#
-# def test_two_commits(testdir):
-#     pass
 
 
 def test_GenericVisitor_extract(testdir):
@@ -48,15 +96,12 @@ def test_GenericVisitor_extract(testdir):
             assert output == []
     """)
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_ObjectNameExtractor(testdir):
@@ -70,15 +115,12 @@ def test_ObjectNameExtractor(testdir):
             assert output == ['ObjectNameExtractor', 'open', 'parse']
     """)
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_ImportModuleNameExtractor(testdir):
@@ -89,18 +131,37 @@ def test_ImportModuleNameExtractor(testdir):
             imne = ImportModuleNameExtractor()
             with open(__file__) as f:
                 output = imne.extract(parse(f.read()))
-            assert output == ['ast', 'pytest_smartcollect.helpers']
+            assert output == [('ast', ['parse']), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'])]
     """)
 
-    result = testdir.runpytest()
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
 
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+def test_DefinitionNodeExtractor(testdir):
+    testdir.makepyfile("""
+        def test_DefinitionNodeExtractor_extract():
+            from ast import parse, FunctionDef
+            from pytest_smartcollect.helpers import DefinitionNodeExtractor
+            dne = DefinitionNodeExtractor()
+            with open(__file__) as f:
+                output = dne.extract(parse(f.read()))
+                
+            assert len(output) == 1
+            assert isinstance(output[0], FunctionDef)
+            assert output[0].name == 'test_DefinitionNodeExtractor_extract'
+    """)
+
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_git_repo_root(testdir):
@@ -114,15 +175,12 @@ def test_find_git_repo_root(testdir):
             assert grr == r"%s"
     """ % (os.path.join(os.path.abspath("."), "foo"), os.path.abspath('.')))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_all_files(testdir):
@@ -143,15 +201,12 @@ def test_find_all_files(testdir):
             assert len(f) == 3
     """ % os.path.abspath("."))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_changed_files(testdir):
@@ -185,15 +240,12 @@ def test_find_changed_files(testdir):
             assert r"%s" in m.keys()
     """ % (temp_repo_folder, os.path.join(temp_repo_folder, "foo.py")))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_changed_members(testdir):
@@ -223,15 +275,12 @@ def test_find_changed_members(testdir):
             assert r"%s" in cm
     """ % (temp_repo_folder, "hello"))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_fully_qualified_module_name(testdir):
@@ -251,6 +300,13 @@ def test_find_fully_qualified_module_name(testdir):
             name = find_fully_qualified_module_name(r"%s")
             assert name == "foo.bar"
     """ % os.path.join(os.path.abspath("."), "foo", "bar.py"))
+
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_imports_package_relative(testdir):
@@ -284,15 +340,12 @@ def test_find_imports_package_relative(testdir):
             assert os.path.basename(found[0]) == os.path.basename(r"%s")
     """ % (os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
 def test_find_imports_package_external(testdir):
@@ -328,18 +381,52 @@ def test_find_imports_package_external(testdir):
         """ % (os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
                os.path.abspath(os.path.join("foo", "zoo.py"))))
 
-    result = testdir.runpytest()
-
-    # fnmatch_lines does an assertion internally
-    result.stdout.fnmatch_lines([
-        '*1 passed in * seconds*',
-    ])
-
-    # make sure that that we get a '0' exit code for the testsuite
-    assert result.ret == 0
+    _check_result(
+        testdir,
+        [],
+        ['*1 passed in * seconds*'],
+        lambda x: x == 0
+    )
 
 
-def test_smartcollect(testdir):
+def test_filter_ignore_sources(testdir): # TODO: the code that this tests is broken
+    Repo.init(".")
+
+    testdir.makepyfile(test_foo="""
+        def test_foo():
+            from foo import foo
+    """)
+
+    r = Repo(".")
+    r.index.add(["test_foo.py"])
+    r.index.commit("initial commit")
+
+    testdir.makepyfile(foo="""
+        def foo():
+            pass
+    """)
+
+    r.index.add(["foo.py"])
+    r.index.commit("second commit")
+
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1", "--ignore-source", os.path.join(testdir.tmpdir.dirpath(), "test_foo.py")],
+        ["*1 skipped in * seconds*"],
+        lambda x: x == 0,
+        cover_sources=False
+    )
+
+
+def test_dependencies_changed(testdir): # TODO, for coverage report only
+    # case 1: a direct dependency has changed
+    # case 2: one step dependency changed
+    # case 3: two step dependency changed
+    # case 4: no dependencies changed
+    pass
+
+
+def test_run_smart_collection(testdir):
     Repo.init(".")
 
     testdir.makepyfile(hello="""
@@ -349,7 +436,19 @@ def test_smartcollect(testdir):
 
     testdir.makepyfile(goodbye="""
         def goodbye():
-            return 42
+            return 43
+    """)
+
+    testdir.makepyfile(hello_goodbye="""
+        from hello import hello
+        from goodbye import goodbye
+
+        def hello_goodbye(select):
+            if select == 'hello':
+                return hello()
+
+            else:
+                return goodbye()
     """)
 
     testdir.makepyfile(test_hello="""
@@ -361,37 +460,57 @@ def test_smartcollect(testdir):
     testdir.makepyfile(test_goodbye="""
         def test_goodbye():
             from goodbye import goodbye
-            assert goodbye() == 42
+            assert goodbye() == 43\n
+    """)
+
+    testdir.makepyfile(test_hello_goodbye="""
+        def test_hello_goodbye():
+            from hello_goodbye import hello_goodbye
+            assert hello_goodbye('hello') == 42
+            assert hello_goodbye('goodbye') == 43
     """)
 
     r = Repo(".")
-    r.index.add(["hello.py", "goodbye.py"])
+    r.index.add(["hello.py", "goodbye.py", "hello_goodbye.py"])
     r.index.commit("initial commit")
 
-    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
+    # case 1: all tests are new, and therefore should run
+    _check_result(
+        testdir,
+        ["--smart-collect"],
+        ["*3 passed in * seconds*"],
+        lambda x: x == 0,
+        cover_sources=False
+    )
 
-    result.stdout.fnmatch_lines(["*2 passed in * seconds*"])
-
-    assert result.ret == 0
-
+    # case 2: one direct dependency (of test_hello) and one indirect dependency (of test_hello_goodbye) has changed
     with open("hello.py", "w") as f:
-        f.write("def hello():\n\treturn 43")
+        f.write("def hello():\n\treturn 44")
 
     r.index.add(["hello.py"])
     r.index.commit("second commit")
 
-    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1"],
+        ["*2 failed, 1 skipped in * seconds*"],
+        lambda x: x != 0,
+        cover_sources=False
+    )
 
-    result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
+    # test the lastfailed functionality -- test_hello and test_hello_goodbye should still fail, but it should also still run those tests even though changes to their dependencies didn't occur
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1"],
+        ["*2 failed, 1 skipped in * seconds*"],
+        lambda x: x != 0,
+        cover_sources=False
+    )
 
-    assert result.ret != 0
 
-    # test the lastfailed functionality -- test_hello should still fail, but it should also still run even though changes to hello.py didn't occur
-    result = testdir.runpytest("--smart-collect", "--commit-range", "1")
-
-    result.stdout.fnmatch_lines(["*1 failed, 1 skipped in * seconds*"])
-
-    assert result.ret != 0
+# def test_generate_coverage_report(testdir):
+#     cov = Coverage()
+#     cov.combine(coverage_files)
 
 
 
