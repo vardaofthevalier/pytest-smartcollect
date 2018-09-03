@@ -93,7 +93,7 @@ def find_all_files(repo_path: str) -> DictOfChangedFile:
         for f in files:
             if os.path.splitext(f)[-1] == ".py":
                 fpath = os.path.join(root, f)
-                with open(fpath) as g:
+                with open(fpath, encoding='utf-8') as g:
                     all_files[fpath] = ChangedFile(
                         change_type='A',
                         old_filepath=None,
@@ -216,7 +216,7 @@ def find_changed_members(changed_module: ChangedFile, repo_path: str) -> ListOfS
     changed_members = []
     name_extractor = ObjectNameExtractor()
 
-    with open(os.path.join(repo_path, changed_module.current_filepath)) as f:
+    with open(os.path.join(repo_path, changed_module.current_filepath), encoding='utf-8') as f:
         contents = f.read()
 
     total_lines = len(contents.split('\n'))
@@ -258,7 +258,7 @@ def find_import(repo_root: str, module_path: str) -> ListOfString:
     for root, _, files in os.walk(repo_root):
         for f in files:
             if os.path.splitext(f)[-1] == ".py":
-                with open(os.path.join(root, f)) as g:
+                with open(os.path.join(root, f), encoding='utf-8') as g:
                     a = ast.parse(g.read())
 
                 for (module, _) in module_name_extractor.extract(a):
@@ -304,7 +304,7 @@ def dependencies_changed(path: str, object_name: str, change_map: DictOfListOfSt
         chain.insert(0, "%s::%s" % (path, object_name))
         return True
 
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         module_ast = ast.parse(f.read())
 
     # find locally changed members
