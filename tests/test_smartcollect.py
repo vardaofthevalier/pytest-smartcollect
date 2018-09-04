@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 import os
 import typing
+import pytest
 from importlib import import_module
 from _pytest.pytester import Testdir
 from coverage import Coverage
 from shutil import move
 from git import Repo
 from pip._internal import main as pip
+from pytest_smartcollect.helpers import SmartCollector
 
 if not os.environ.get('USERNAME'):
     os.environ["USERNAME"] = "foo"
@@ -169,11 +171,25 @@ def test_find_git_repo_root(testdir):
     testdir.mkpydir("foo")
 
     testdir.makepyfile("""
-        def test_find_git_repo_root():
-            from pytest_smartcollect.helpers import find_git_repo_root
-            grr = find_git_repo_root(r"%s")
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_git_repo_root(smart_collector):
+            grr = smart_collector.find_git_repo_root(r"%s")
             assert grr == r"%s"
-    """ % (os.path.join(os.path.abspath("."), "foo"), os.path.abspath('.')))
+    """ % (os.path.join(os.path.abspath("."), "foo"), os.path.join(os.path.abspath("."), "foo"), os.path.abspath('.')))
 
     _check_result(
         testdir,
@@ -195,11 +211,25 @@ def test_find_all_files(testdir):
     """)
 
     testdir.makepyfile("""
-        def test_find_all_files():
-            from pytest_smartcollect.helpers import find_all_files
-            f = find_all_files(r"%s")
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_all_files(smart_collector):
+            f = smart_collector.find_all_files(r"%s")
             assert len(f) == 3
-    """ % os.path.abspath("."))
+    """ % (os.path.abspath("."), os.path.abspath(".")))
 
     _check_result(
         testdir,
@@ -225,20 +255,34 @@ def test_find_changed_files(testdir):
     temp_git_repo.index.commit("second commit")
 
     testdir.makepyfile("""
-        def test_find_changed_files():
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_changed_files(smart_collector):
             from git import Repo
             repo_path = r"%s"
             repo = Repo(repo_path)
             assert len(list(repo.iter_commits('HEAD'))) == 2
-            from pytest_smartcollect.helpers import find_changed_files
-            a, m, d, r, t = find_changed_files(Repo(repo_path), repo_path, 'master', 1)
+            a, m, d, r, t = smart_collector.find_changed_files(Repo(repo_path), repo_path)
             assert len(m) == 1
             assert len(a) == 0
             assert len(d) == 0 
             assert len(r) == 0
             assert len(t) == 0
             assert r"%s" in m.keys()
-    """ % (temp_repo_folder, os.path.join(temp_repo_folder, "foo.py")))
+    """ % (temp_repo_folder, temp_repo_folder, os.path.join(temp_repo_folder, "foo.py")))
 
     _check_result(
         testdir,
@@ -264,16 +308,30 @@ def test_find_changed_members(testdir):
     temp_git_repo.index.commit("second commit")
 
     testdir.makepyfile("""
-        def test_find_changed_members():
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_changed_members(smart_collector):
             from git import Repo
             repo_path = r"%s"
             repo = Repo(repo_path)
-            from pytest_smartcollect.helpers import find_changed_files, find_changed_members
-            _, m, _, _, _= find_changed_files(Repo(repo_path), repo_path, 'master', 1)
-            cm = find_changed_members(list(m.values())[-1], repo_path)
+            _, m, _, _, _= smart_collector.find_changed_files(Repo(repo_path), repo_path)
+            cm = smart_collector.find_changed_members(list(m.values())[-1], repo_path)
             assert len(cm) == 1
             assert r"%s" in cm
-    """ % (temp_repo_folder, "hello"))
+    """ % (temp_repo_folder, temp_repo_folder, "hello"))
 
     _check_result(
         testdir,
@@ -293,13 +351,27 @@ def test_find_fully_qualified_module_name(testdir):
     move(os.path.join("bar.py"), os.path.join("foo", "bar.py"))
 
     testdir.makepyfile("""
-        def test_find_fully_qualified_module_name():
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_fully_qualified_module_name(smart_collector):
             import os
             import foo
-            from pytest_smartcollect.helpers import find_fully_qualified_module_name
-            name = find_fully_qualified_module_name(r"%s")
+            name = smart_collector.find_fully_qualified_module_name(r"%s")
             assert name == "foo.bar"
-    """ % os.path.join(os.path.abspath("."), "foo", "bar.py"))
+    """ % (testdir.tmpdir.dirpath(), os.path.join(os.path.abspath("."), "foo", "bar.py")))
 
     _check_result(
         testdir,
@@ -332,13 +404,27 @@ def test_find_imports_package_relative(testdir):
     pip(['install', '-U', '.'])
 
     testdir.makepyfile("""
-        def test_find_imports_package_relative():
+        import logging
+        import pytest
+        from pytest_smartcollect.helpers import SmartCollector
+        @pytest.fixture
+        def smart_collector():
+            return SmartCollector(
+                r"%s",
+                [],
+                [],
+                1,
+                'master',
+                False,
+                ['utf-8'],
+                logging.getLogger()
+            )
+        def test_find_imports_package_relative(smart_collector):
             import os
-            from pytest_smartcollect.helpers import find_import
-            found = find_import(r"%s", r"%s")
+            found = smart_collector.find_import(r"%s", r"%s")
             assert len(found) == 1
             assert os.path.basename(found[0]) == os.path.basename(r"%s")
-    """ % (os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
+    """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
 
     _check_result(
         testdir,
@@ -372,13 +458,27 @@ def test_find_imports_package_external(testdir):
     pip(['install', '-U', '.'])
 
     testdir.makepyfile("""
-            def test_find_imports_package_external():
+            import logging
+            import pytest
+            from pytest_smartcollect.helpers import SmartCollector
+            @pytest.fixture
+            def smart_collector():
+                return SmartCollector(
+                    r"%s",
+                    [],
+                    [],
+                    1,
+                    'master',
+                    False,
+                    ['utf-8'],
+                    logging.getLogger()
+                )
+            def test_find_imports_package_external(smart_collector):
                 import os
-                from pytest_smartcollect.helpers import find_import
-                found = find_import(r"%s", r"%s")
+                found = smart_collector.find_import(r"%s", r"%s")
                 assert len(found) == 1
                 assert os.path.basename(found[0]) == os.path.basename(r"%s")
-        """ % (os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
+        """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
                os.path.abspath(os.path.join("foo", "zoo.py"))))
 
     _check_result(
