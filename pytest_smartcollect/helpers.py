@@ -30,6 +30,7 @@ class GenericVisitor(ast.NodeVisitor):
     def __init__(self):
         super(GenericVisitor, self).__init__()
         self.cache = []
+        self._ast_filepath = None
 
     def extract(self, node) -> list:
         self.cache.clear()
@@ -65,15 +66,16 @@ class ImportModuleNameExtractor(GenericVisitor):
 
     def visit_Import(self, node):
         imp = import_module(node.names[0].name)
-        self.cache.append((node.names[0].name, ['%s.%s' % (node.names[0].name, x) for x in dir(imp)]))
+        self.cache.append((node.names[0].name, dir(imp), 0))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         names = list(map(lambda x: x.name, node.names))
         if '*' in names:
-            imp = import_module(node.name)
+            imp = import_module(node.module)
             names = dir(imp)
-        self.cache.append((node.module, names))
+        self.cache.append((node.module, names, node.level))
+        self.generic_visit(node)
 
 
 class SmartCollector(object):
@@ -282,11 +284,11 @@ class SmartCollector(object):
         for root, _, files in os.walk(repo_root):
             for f in files:
                 if os.path.splitext(f)[-1] == ".py":
-                    contents, _ = self.read_file(os.path.join(root, f))
+                    path = os.path.join(root, f)
+                    contents, _ = self.read_file(path)
                     a = ast.parse(contents)
-
-                    for (module, _) in module_name_extractor.extract(a):
-                        # determine whether or not the module is part of the standard library
+                    for (module, _, _) in module_name_extractor.extract(a):
+                        # # determine whether or not the module is part of the standard library
                         if module in sys.builtin_module_names:
                             continue
 
@@ -306,7 +308,7 @@ class SmartCollector(object):
                             except ImportError:
                                 raise Exception("Module '%s' was imported in file '%s', but the module is not installed in the environment" % (module, os.path.join(root, f)))
 
-                        if os.path.basename(i.__file__) == os.path.basename(module_path):
+                        if "__file__" in vars(i) and os.path.basename(i.__file__) == os.path.basename(module_path):
                             found.append(f)
                             break
 
@@ -323,10 +325,16 @@ class SmartCollector(object):
         return ".".join(parts)
 
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
-        if path in change_map.keys() and object_name in change_map[path]:
+        git_repo_root = self.find_git_repo_root(self.rootdir)
+
+        if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
             chain.insert(0, "%s::%s" % (path, object_name))
             return True
 
+        if git_repo_root not in os.path.commonpath([git_repo_root, path]):  # if the file is outside of the project, don't bother checking it or any of its dependencies
+            return False
+
+        # otherwise, recursively check the dependencies of this file for other known changes
         contents, _ = self.read_file(path)
         module_ast = ast.parse(contents)
 
@@ -352,18 +360,34 @@ class SmartCollector(object):
         imne = ImportModuleNameExtractor()
         extracted_imports = imne.extract(module_ast)
 
-        for module_name, imported_names in extracted_imports:
-            if module_name in sys.builtin_module_names:
+        for (module_name, imported_names, import_level) in extracted_imports:
+            if module_name in sys.builtin_module_names: # we can safely assume that builtin module changes aren't relevant
                 continue
+
+            if module_name is None:  # here we need to find the fully qualified module name for a package relative import
+                assert import_level > 0
+                module_name = self.find_fully_qualified_module_name(os.path.dirname(path))
+
+            else:
+                if import_level > 0: # another package relative import situation
+                    module_name = [module_name]
+                    src_path = path
+                    while import_level > 0:
+                        src_path = os.path.dirname(src_path)
+                        module_name.insert(0, os.path.basename(src_path))
+                        import_level -= 1
+
+                    module_name = '.'.join(module_name)
 
             i = import_module(module_name)
 
-            for imported_name in imported_names:
-                if imported_name in imported_names_and_modules.keys() and i.__file__ not in imported_names_and_modules[imported_name]:
-                    imported_names_and_modules[imported_name].append(i.__file__)
+            if '__file__' in vars(i):
+                for imported_name in imported_names:
+                    if imported_name in imported_names_and_modules.keys() and i.__file__ not in imported_names_and_modules[imported_name]:
+                        imported_names_and_modules[imported_name].append(i.__file__)
 
-                else:
-                    imported_names_and_modules[imported_name] = [i.__file__]
+                    else:
+                        imported_names_and_modules[imported_name] = [i.__file__]
 
         # extract call objects from obj
         object_name_extractor = ObjectNameExtractor()
@@ -372,7 +396,7 @@ class SmartCollector(object):
         for name in used_names:
             if name in locally_changed:
                 if path in change_map.keys() and name in change_map[path]:
-                    chain.insert(0, "%s::%s" % (path, name))
+                    # chain.insert(0, "%s::%s" % (path, name))
                     return True
 
             if name in imported_names_and_modules.keys():
@@ -383,7 +407,7 @@ class SmartCollector(object):
                         else:
                             change_map[module_path] = [name]
 
-                        chain.insert(0, "%s::%s" % (module_path, name))
+                        #chain.insert(0, "%s::%s" % (module_path, name))
                         return True
 
                     else:

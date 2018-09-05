@@ -22,6 +22,7 @@ coverage_files = []
 # - test different diff targets
 # - test preemptive failures
 # - test_dependencies_changed (for coverage report)
+# - test different file encodings and interaction with --accept-encoding parameter
 
 ListOfString = typing.List[str]
 
@@ -133,7 +134,7 @@ def test_ImportModuleNameExtractor(testdir):
             imne = ImportModuleNameExtractor()
             with open(__file__) as f:
                 output = imne.extract(parse(f.read()))
-            assert output == [('ast', ['parse']), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'])]
+            assert output == [('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
     """)
 
     _check_result(
@@ -489,7 +490,7 @@ def test_find_imports_package_external(testdir):
     )
 
 
-def test_filter_ignore_sources(testdir): # TODO: the code that this tests is broken
+def test_filter_ignore_sources(testdir):
     Repo.init(".")
 
     testdir.makepyfile(test_foo="""
