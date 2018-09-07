@@ -4,46 +4,71 @@ import typing
 import pytest
 from importlib import import_module
 from _pytest.pytester import Testdir
-from coverage import Coverage
 from shutil import move
 from git import Repo
 from pip._internal import main as pip
-from pytest_smartcollect.helpers import SmartCollector
+import coverage
+from coverage import Coverage
+from pytest_smartcollect import helpers, plugin
 
-if not os.environ.get('USERNAME'):
+if not os.environ.get('USERNAME'):  # weird workaround for getting tox to work on Windows
     os.environ["USERNAME"] = "foo"
 
 smart_collect_source = os.path.dirname(import_module('pytest_smartcollect.plugin').__file__)
 coverage_files = []
 
 # TODO: new test cases:
-# - test individual change types for diffs
-# - test different commit ranges (also: need to consider what might happen if invalid integer values are passed in)
-# - test different diff targets
-# - test preemptive failures
-# - test_dependencies_changed (for coverage report)
-# - test different file encodings and interaction with --accept-encoding parameter
+# - test attempt to set an incorrect encoding with --accept-encoding flag (failing case, cover_sources = False)
+# - test repo with binary file
+# - test deleted path with references removed
+# - test deleted path with references to it still there (failing case, cover_sources = False)
+# - test renamed path with references updated
+# - test renamed path with references to old path still there (failing case, cover_sources = False)
+# - test file changed type (to python) with updated references
+# - test file changed type (from python) with references to old path still there (failing case, cover_sources = False)
+# - test importing module member of type ast.Assign
+# - test importing module member of type ast.ClassDef
+# - test importing module from builtin modules
+# - test importing a file outside of the git repo
+# - test importing a module that isn't installed in the environment (failing case, cover_sources = False)
+# - test invalid commit range (failing case, cover_sources = False)
+# - test invalid diff target (failing case, cover_sources = False)
+# - test preemptive failures (failing case, cover_sources = False)
+# - test common dependency of two files
+# - test locally changed dependencies in one file
+# - test scan of test ast containing extraneous objects (not a function or class definition)
+# - test package relative imports using relative import notation
+# - test name collisions in imports across multiple different files
+# - test longer dependency chain changes
+# - test that tests with a skip marker do indeed get skipped
 
 ListOfString = typing.List[str]
 
 
-def _check_result(testdir: Testdir, pytest_args: ListOfString, match_lines: ListOfString, return_code_assert: typing.Callable, cover_sources=True):
+@pytest.fixture
+def coverage_report_directory(request):
+    return request.config.getoption("--coverage-report-directory")
+
+
+def _check_result(td: Testdir, pytest_args: ListOfString, match_lines: ListOfString, return_code_assert: typing.Callable, cover_sources=True):
     if cover_sources:
         default_pytest_args = ["--cov=%s" % smart_collect_source]
-        coverage_files.append(os.path.join(testdir.tmpdir.dirpath(), '.coverage'))
 
     else:
         default_pytest_args = []
 
     pytest_args.extend(default_pytest_args)
 
-    result = testdir.runpytest(*pytest_args)
+    result = td.runpytest(*pytest_args)
 
     # fnmatch_lines does an assertion internally
     result.stdout.fnmatch_lines(match_lines)
 
     # make sure that that we get a '0' exit code for the testsuite
     assert return_code_assert(result.ret)
+
+    if cover_sources:  # only add the coverage file if the test passed and cover_sources is specified
+        coverage_files.append(os.path.join(str(td.tmpdir), '.coverage'))
 
 
 def test_source_not_repo(testdir):
@@ -83,17 +108,16 @@ def test_one_commit(testdir):
         testdir,
         ["--smart-collect"],
         ['*1 passed in * seconds*'],
-        lambda x: x == 0,
-        cover_sources=False
+        lambda x: x == 0
     )
 
 
 def test_GenericVisitor_extract(testdir):
     testdir.makepyfile("""
+        from ast import parse
+        from pytest_smartcollect import helpers
         def test_GenericVisitor_extract():
-            from ast import parse
-            from pytest_smartcollect.helpers import GenericVisitor
-            gv = GenericVisitor()
+            gv = helpers.GenericVisitor()
             with open(__file__) as f:
                 output = gv.extract(parse(f.read()))
             assert output == []
@@ -128,13 +152,14 @@ def test_ObjectNameExtractor(testdir):
 
 def test_ImportModuleNameExtractor(testdir):
     testdir.makepyfile("""
+        from pytest_smartcollect import *
         def test_ImportModuleNameExtractor_extract():
             from ast import parse
             from pytest_smartcollect.helpers import ImportModuleNameExtractor
             imne = ImportModuleNameExtractor()
             with open(__file__) as f:
                 output = imne.extract(parse(f.read()))
-            assert output == [('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
+            assert output == [('pytest_smartcollect', ['__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', 'helpers', 'plugin'], 0), ('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
     """)
 
     _check_result(
@@ -147,16 +172,22 @@ def test_ImportModuleNameExtractor(testdir):
 
 def test_DefinitionNodeExtractor(testdir):
     testdir.makepyfile("""
+        class Foo(object):
+            def __init__(self):
+                pass 
+                
         def test_DefinitionNodeExtractor_extract():
-            from ast import parse, FunctionDef
+            from ast import parse, FunctionDef, ClassDef
             from pytest_smartcollect.helpers import DefinitionNodeExtractor
             dne = DefinitionNodeExtractor()
             with open(__file__) as f:
                 output = dne.extract(parse(f.read()))
                 
-            assert len(output) == 1
-            assert isinstance(output[0], FunctionDef)
-            assert output[0].name == 'test_DefinitionNodeExtractor_extract'
+            assert len(output) == 2
+            assert isinstance(output[0], ClassDef)
+            assert isinstance(output[1], FunctionDef)
+            assert output[0].name == 'Foo'
+            assert output[1].name == 'test_DefinitionNodeExtractor_extract'
     """)
 
     _check_result(
@@ -241,7 +272,8 @@ def test_find_all_files(testdir):
 
 
 def test_find_changed_files(testdir):
-    temp_repo_folder = testdir.tmpdir.dirpath()
+    # temp_repo_folder = testdir.tmpdir.dirpath()
+    temp_repo_folder = str(testdir.tmpdir)
     temp_git_repo = Repo.init(temp_repo_folder)
 
     filename = os.path.join(temp_repo_folder, "foo.py")
@@ -294,7 +326,8 @@ def test_find_changed_files(testdir):
 
 
 def test_find_changed_members(testdir):
-    temp_repo_folder = testdir.tmpdir.dirpath()
+    # temp_repo_folder = testdir.tmpdir.dirpath()
+    temp_repo_folder = str(testdir.tmpdir)
     temp_git_repo = Repo.init(temp_repo_folder)
 
     filename = os.path.join(temp_repo_folder, "foo.py")
@@ -515,16 +548,8 @@ def test_filter_ignore_sources(testdir):
         ["--smart-collect", "--commit-range", "1", "--ignore-source", os.path.join(testdir.tmpdir.dirpath(), "test_foo.py")],
         ["*1 skipped in * seconds*"],
         lambda x: x == 0,
-        cover_sources=False
+        #cover_sources=False
     )
-
-
-def test_dependencies_changed(testdir): # TODO, for coverage report only
-    # case 1: a direct dependency has changed
-    # case 2: one step dependency changed
-    # case 3: two step dependency changed
-    # case 4: no dependencies changed
-    pass
 
 
 def test_run_smart_collection(testdir):
@@ -580,8 +605,7 @@ def test_run_smart_collection(testdir):
         testdir,
         ["--smart-collect"],
         ["*3 passed in * seconds*"],
-        lambda x: x == 0,
-        cover_sources=False
+        lambda x: x == 0
     )
 
     # case 2: one direct dependency (of test_hello) and one indirect dependency (of test_hello_goodbye) has changed
@@ -595,8 +619,7 @@ def test_run_smart_collection(testdir):
         testdir,
         ["--smart-collect", "--commit-range", "1"],
         ["*2 failed, 1 skipped in * seconds*"],
-        lambda x: x != 0,
-        cover_sources=False
+        lambda x: x != 0
     )
 
     # test the lastfailed functionality -- test_hello and test_hello_goodbye should still fail, but it should also still run those tests even though changes to their dependencies didn't occur
@@ -604,14 +627,29 @@ def test_run_smart_collection(testdir):
         testdir,
         ["--smart-collect", "--commit-range", "1"],
         ["*2 failed, 1 skipped in * seconds*"],
-        lambda x: x != 0,
-        cover_sources=False
+        lambda x: x != 0
     )
 
+    # test encoding mismatch -- should raise an exception
+    # with open("hello.py", "w", encoding='utf-8-sig') as f:
+    #     f.write("\ufeffdef hello():\n\treturn 45")
+    #
+    # r.index.add(["hello.py"])
+    # r.index.commit("third commit")
+    #
+    # _check_result(
+    #     testdir,
+    #     ["--smart-collect"],
+    #     ["*no tests ran*"],
+    #     lambda x: x != 0,
+    #     cover_sources=False
+    # )
 
-# def test_generate_coverage_report(testdir):
-#     cov = Coverage()
-#     cov.combine(coverage_files)
+
+def test_generate_coverage_report(coverage_report_directory):
+    cov = Coverage()
+    cov.combine(coverage_files)
+    cov.html_report(directory=coverage_report_directory)
 
 
 

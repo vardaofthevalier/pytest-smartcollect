@@ -97,7 +97,7 @@ class SmartCollector(object):
 
                 contents = ''.join(lines)
                 linecount = len(lines)
-                ast.parse(contents)
+                ast.parse(contents) # to test whether the encoding is a match ;)
 
             except SyntaxError:
                 continue
@@ -145,8 +145,6 @@ class SmartCollector(object):
             'T': {}
         }
 
-        # currently this only calculates the diff between the tip of the branch and the previous commits specified in commit_range
-        # it might be useful in the future to add additional functionality for using diffs between the index and HEAD, between the working tree and HEAD, or between arbitrary commits
         current_head = repo.head.commit
         previous_commits = repo.commit("%s~%d" % (self.diff_current_head_with_branch, self.commit_range))
         diffs = previous_commits.diff(current_head)
@@ -396,7 +394,6 @@ class SmartCollector(object):
         for name in used_names:
             if name in locally_changed:
                 if path in change_map.keys() and name in change_map[path]:
-                    # chain.insert(0, "%s::%s" % (path, name))
                     return True
 
             if name in imported_names_and_modules.keys():
@@ -407,7 +404,6 @@ class SmartCollector(object):
                         else:
                             change_map[module_path] = [name]
 
-                        #chain.insert(0, "%s::%s" % (module_path, name))
                         return True
 
                     else:
@@ -538,7 +534,6 @@ class SmartCollector(object):
                 self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
                 skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                 test.add_marker(skip)
-
 
 
 
