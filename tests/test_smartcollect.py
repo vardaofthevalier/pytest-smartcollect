@@ -15,13 +15,14 @@ if not os.environ.get('USERNAME'):  # weird workaround for getting tox to work o
     os.environ["USERNAME"] = "foo"
 
 smart_collect_source = os.path.dirname(import_module('pytest_smartcollect.plugin').__file__)
+os.environ["COV_CORE_SOURCE"] = smart_collect_source
+
 coverage_files = []
 
 # TODO: new test cases:
 # - test attempt to set an incorrect encoding with --accept-encoding flag (failing case, cover_sources = False)
 # - test repo with binary file
-# - test deleted path with references removed
-# - test deleted path with references to it still there (failing case, cover_sources = False)
+
 # - test renamed path with references updated
 # - test renamed path with references to old path still there (failing case, cover_sources = False)
 # - test file changed type (to python) with updated references
@@ -60,11 +61,7 @@ def _check_result(td: Testdir, pytest_args: ListOfString, match_lines: ListOfStr
     pytest_args.extend(default_pytest_args)
 
     result = td.runpytest(*pytest_args)
-
-    # fnmatch_lines does an assertion internally
     result.stdout.fnmatch_lines(match_lines)
-
-    # make sure that that we get a '0' exit code for the testsuite
     assert return_code_assert(result.ret)
 
     if cover_sources:  # only add the coverage file if the test passed and cover_sources is specified
@@ -644,6 +641,37 @@ def test_run_smart_collection(testdir):
     #     lambda x: x != 0,
     #     cover_sources=False
     # )
+
+    # test deleted paths with references still existing  TODO: move this to a separate test in order to improve coverage
+    os.remove("hello.py")
+    os.remove("test_hello.py")
+    r.index.remove(["hello.py"])
+    r.index.commit("")
+
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1", "--allow-preemptive-failures"],
+        [],
+        lambda x: x != 0,
+        cover_sources=False
+    )
+
+    # now remove the references
+    with open("hello_goodbye.py", "w") as f:
+        f.write("from goodbye import goodbye\ndef hello_goodbye():\n\treturn goodbye()")
+
+    with open("test_hello_goodbye.py", "w") as f:
+        f.write("def test_hello_goodbye():\n\tfrom hello_goodbye import hello_goodbye\n\tassert hello_goodbye() == 43")
+
+    r.index.add(["hello_goodbye.py"])
+    r.index.commit("")
+
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1"],
+        ["*1 passed, 1 skipped in * seconds*"],
+        lambda x: x == 0
+    )
 
 
 def test_generate_coverage_report(coverage_report_directory):
