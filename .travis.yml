@@ -1,32 +1,42 @@
-# Config file for automatic testing at travis-ci.org
-
 sudo: false
 language: python
-
 matrix:
-    include:
-      - python: 2.7
-        env: TOX_ENV=py27
-      - python: 3.4
-        env: TOX_ENV=py34
-      - python: 3.5
-        env: TOX_ENV=py35
-      - python: 3.6
-        env: TOX_ENV=py36
-      - python: pypy
-        env: TOX_ENV=pypy
-      - python: 3.6
-        env: TOX_ENV=flake8
-
+  include:
+  - python: 2.7
+    env: TOX_ENV=py27
+  - python: 3.4
+    env: TOX_ENV=py34
+  - python: 3.5
+    env: TOX_ENV=py35
+  - python: 3.6
+    env: TOX_ENV=py36
+  - python: pypy
+    env: TOX_ENV=pypy
+  - python: 3.6
+    env: TOX_ENV=flake8
 install:
-  - pip install tox
-
+- pip install tox
 script:
-  - tox -e $TOX_ENV
-
+- tox -e $TOX_ENV
 before_cache:
-  - rm -rf $HOME/.cache/pip/log
-
+- rm -rf $HOME/.cache/pip/log
 cache:
   directories:
-    - $HOME/.cache/pip
+  - "$HOME/.cache/pip"
+deploy:
+- provider: pypi
+  user: vardaofthevalier
+  password:
+    secure: cm/NFtmBaeOYvvlSTUzc+m69nziSRKuJpwgbPBP5+8/bgeUiThW7X/fmHDvKqMY3x1WBcr5vT9QZbcEgIYp78MtVjjuIWFDHOoxqNIraVW4aUZ9JyLJz83RcjcC+chEF4cCvfrPyLqRlFjqDwubpuCc8MKjY1o+RZBgLXYs0EMxHrumxaOMpFlXNvkiY5cr2tj1ozszgbUgWx1XrkiZsvoCANmsoqN9Z1NSFDmXM31oPEyeWv9s00bHqygJ272McjkbQ09YUIBySWCdZi+bVWjEkn/2RdzGxG1DSYSjhJDjqcG9/cfZ845Jl4a1R/K2ZYPzj+gafsaJ5MQhpxzYhIAvpQdBP7wFlloiodSHTUyjsOklGshB31VcT6hItNdYsgE1H6EOsmTs/nosAZ6Po9quzEmupYW2gg1Jmw2bfKzPIVgbYTpsok0G4u73b1Ssn5yfCIMfzeG3HUs25XjjsMbfcS4kONnA8BpX7LaGAOKU709Xfu+jhxesPGAe0zMhYIJddAa7oJ8oocBtUvtZL/qtDg29EyKV2zYMTZY3YqTYq0cV1x5OgcznWCweVseAe1Fms4AhJ6NBnOpG4IMShoRUU2wGErb9vcYMMhnBM4cnv1OfnY89A/BAM8aWMSffz+aBGclAfglljJ9NAH/ZjrWOfRG1GUWjl9+nrx19zgc8=
+  on:
+    tags: true
+  distributions: sdist bdist_wheel
+  skip_cleanup: true
+- provider: releases
+  user: vardaofthevalier
+  password:
+    secure: r0hCuj+Q1/MRTw/aSdAfiWci3fcoKHBb6RaO12tmQtmVDq+uWa0tlo6SP6hJpVsPLJk27tKyeKIk7AGdWfQzElnMSk9N10jBY1VveCmYXR9mYdt5L/1ySTmzFB9wTcNIUc3pL9n9/KJykcvafLUFPN6UcQYtPpMehAoPu3pLXQQG+A5rml4zlqx/s9KdK/Hy4qkEqTlXOivHiGI4iNddre2/drTa0tkeVNaoELDvXX6Ytr9NN9Am4Jjk3/xdm3FEocTU2PWNII5OMd2Ny8Fenh2S3yj3ObqBvC4SHBFUJiPKiZpPLOo6XwqAeIxL5KyCDK7OTJua3xhEzZ7UGjbC07WEnpeAKXEdNU79KFrlJMi7QFHoA/DDjdmiVkRXsjYYVp1LH5nwjp3b9YlyQclg/Mm/Su3wnSVMVy/XqLkCU8T0wpYI7kyJq57y1FRpDVOekq8T86J24zrJs/jB2qEjvMHpXX29Rtl3TByvv0CjSKF66eiV7Pyag/E147bBWHdzhM0zcoURACFsscQLBtsL0WEpbM1yTnrpqVTHz9VkJFSCnUisiGseYSMH81AxQxynZtUQq/hxtmLvGfuZhzI+Kvt8fl2nE8bwkSv6uQMxZcZ4Skn/b+9A/xKMPmP7CL8djr4es9taUim5Q44JXPAJTvIvLABH8x8EC+rApdj/zSU=
+  file_glob: true
+  file: dist/*.tar.gz
+  on:
+    tags: true
