@@ -1,5 +1,11 @@
 # pytest-smartcollect
 
+
+[![PyPI version](https://img.shields.io/pypi/v/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
+[![Python versions](https://img.shields.io/pypi/pyversions/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
+[![Build Status](https://travis-ci.org/vardaofthevalier/pytest-smartcollect.svg?branch=master)](https://travis-ci.org/vardaofthevalier/pytest-smartcollect)
+
+
 A pytest plugin for testing code changes calculated using information
 from the output of `git diff`.
 
@@ -16,6 +22,7 @@ Features
 
 - Filters collected tests according to the following criteria:
 
+    -   If a test contains references to changed code, the test will be selected to run.
     -   If a test is new or changed, or if it failed in the previous
             run, it will run regardless of changes to the code that it
             tests.
@@ -26,13 +33,20 @@ Features
             flags, those files will be considered "unchanged" for the
             purposes of filtering the tests.
 
+How it works
+============
+
+File changes (including paths and changed lines) are discovered from the output of `git diff`.  This information is later used to determine which "members" of a given module were changed between commits.  
+
+A particular test will run if there exists any change in it's dependency hierarchy, starting with the test itself.  If the test is changed or new, it will be selected to run regardless of any other changes.  Otherwise, dependency changes are determined by recursively parsing Abstract Sytax Trees within the project using the ast module.  This process begins by parsing the AST for the test file, then resolving imported names within the test module to file names of the respecive modules installed in the environment.  Once this resolution has occurred, the imported module file's AST will also be parsed in the same way recursively.  If at any time a changed member is found, the test will be considered to have a changed dependency and will be selected to run.  Otherwise, the test will be skipped. 
+
 Requirements
 ============
 
 A valid git repository (with at least one commit) containing a python
 project (with tests) in which to calculate changes between commits. If a
 repository has only a single commit, every path within it will be
-considered added and no diff is necessary.
+considered to be changed.
 
 Installation
 ============
@@ -59,6 +73,8 @@ smart collection:
 | --commit-range | Specifies the number of commits before the head of the branch specified with --diff-current-head-with-branch for calculating a diff. Default is 0. |
 | --ignore-source | Specifies a filepath within the git repo that should be ignored during smart collection. Multiple instances of this flag are supported. |
 | --allow-preemptive-failures | Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project. If unset, warning messages will be logged only. |
+| --accept-encoding | An encoding to use when reading and inspecting project files. Multiple instances of this flag are supported. Default is 'utf-8' |
+
 
 *Note*: 
 -   If --rootdir is unset, rootdir is assumed to be the current working
@@ -78,6 +94,8 @@ git checkout -b my_new_branch
 # Add and commit changes on my_new_branch
 git add -A
 git commit -m "Wow, these are great changes!"
+# Install your changed package with pip
+pip install path/to/my_changed_package
 # Run smart collection to test only the changes you made.  The command below will diff the head of the currently checked out branch with the master branch by default.
 pytest --smart-collect
 ```
