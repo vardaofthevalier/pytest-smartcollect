@@ -20,9 +20,7 @@ os.environ["COV_CORE_SOURCE"] = smart_collect_source
 coverage_files = []
 
 # TODO: new test cases:
-# - test attempt to set an incorrect encoding with --accept-encoding flag (failing case, cover_sources = False)
 # - test repo with binary file
-
 # - test renamed path with references updated
 # - test renamed path with references to old path still there (failing case, cover_sources = False)
 # - test file changed type (to python) with updated references
@@ -442,7 +440,6 @@ def test_find_imports_package_relative(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_imports_package_relative(smart_collector):
@@ -496,7 +493,6 @@ def test_find_imports_package_external(testdir):
                     1,
                     'master',
                     False,
-                    ['utf-8'],
                     logging.getLogger()
                 )
             def test_find_imports_package_external(smart_collector):
