@@ -2,7 +2,6 @@
 
 
 [![PyPI version](https://img.shields.io/pypi/v/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
-[![Python versions](https://img.shields.io/pypi/pyversions/pytest-smartcollect.svg)](https://pypi.org/project/pytest-smartcollect)
 [![Build Status](https://travis-ci.org/vardaofthevalier/pytest-smartcollect.svg?branch=master)](https://travis-ci.org/vardaofthevalier/pytest-smartcollect)
 
 
@@ -43,10 +42,12 @@ A particular test will run if there exists any change in it's dependency hierarc
 Requirements
 ============
 
-A valid git repository (with at least one commit) containing a python
+* A valid git repository (with at least one commit) containing a python
 project (with tests) in which to calculate changes between commits. If a
 repository has only a single commit, every path within it will be
 considered to be changed.
+
+* Python version 3.5 or 3.6
 
 Installation
 ============
