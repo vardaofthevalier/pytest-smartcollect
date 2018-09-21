@@ -73,8 +73,6 @@ smart collection:
 | --commit-range | Specifies the number of commits before the head of the branch specified with --diff-current-head-with-branch for calculating a diff. Default is 0. |
 | --ignore-source | Specifies a filepath within the git repo that should be ignored during smart collection. Multiple instances of this flag are supported. |
 | --allow-preemptive-failures | Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project. If unset, warning messages will be logged only. |
-| --accept-encoding | An encoding to use when reading and inspecting project files. Multiple instances of this flag are supported. Default is 'utf-8' |
-
 
 *Note*: 
 -   If --rootdir is unset, rootdir is assumed to be the current working

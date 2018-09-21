@@ -77,37 +77,17 @@ class ImportModuleNameExtractor(GenericVisitor):
 
 
 class SmartCollector(object):
-    def __init__(self, rootdir: str, lastfailed: ListOfString, ignore_source: ListOfString, commit_range: int, diff_current_head_with_branch: str, allow_preemptive_failures: bool, accept_encoding: ListOfString, logger: logging.Logger):
+    def __init__(self, rootdir: str, lastfailed: ListOfString, ignore_source: ListOfString, commit_range: int, diff_current_head_with_branch: str, allow_preemptive_failures: bool, logger: logging.Logger):
         self.rootdir = rootdir
         self.lastfailed = lastfailed
         self.ignore_source = ignore_source
         self.commit_range = commit_range
         self.diff_current_head_with_branch = diff_current_head_with_branch
         self.allow_preemptive_failures = allow_preemptive_failures
-        self.accept_encoding = accept_encoding
         self.logger = logger
         self._encoding_detector = UniversalDetector()
 
     def read_file(self, fpath):
-        # for enc in self.accept_encoding:
-        #     try:
-        #         with open(fpath, encoding=enc) as f:
-        #             lines = f.readlines()
-        #
-        #         contents = ''.join(lines)
-        #         linecount = len(lines)
-        #         ast.parse(contents) # to test whether the encoding is a match ;)
-        #
-        #     except SyntaxError:
-        #         continue
-        #
-        #     except Exception as e:
-        #         raise Exception("Couldn't read file '%s' -- %s", (fpath, str(e)))
-        #
-        #     return contents, linecount
-        #
-        # raise Exception("Couldn't read file '%s' using any of the specified encodings" % fpath)
-
         self._encoding_detector.reset()
 
         f = open(fpath, "rb")

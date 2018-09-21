@@ -43,16 +43,6 @@ def pytest_addoption(parser):
         dest='allow_preemptive_failures',
         help="If any deleted or renamed files are found to be imported in any files under test, collection will fail when using smart collection. Default is False."
     )
-    group.addoption(
-        '--accept-encoding',
-        action='append',
-        default=['utf-8'],
-        nargs='?',
-        const=True,
-        metavar='encoding',
-        dest='accept_encoding',
-        help='An encoding to use when reading and inspecting project files.  Multiple instances of this flag are supported.'
-    )
 
 
 @pytest.fixture
@@ -68,7 +58,6 @@ def pytest_collection_modifyitems(config, items):
     diff_current_head_with_branch = config.option.diff_current_head_with_branch
     allow_preemptive_failures = config.option.allow_preemptive_failures
     log_level = config.option.log_level or 'WARNING'
-    accept_encoding = config.option.accept_encoding
 
     from logging import getLogger
     logger = getLogger()
@@ -84,7 +73,6 @@ def pytest_collection_modifyitems(config, items):
             commit_range,
             diff_current_head_with_branch,
             allow_preemptive_failures,
-            accept_encoding,
             logger
         )
         smart_collector.run(items)
