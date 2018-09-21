@@ -20,9 +20,7 @@ os.environ["COV_CORE_SOURCE"] = smart_collect_source
 coverage_files = []
 
 # TODO: new test cases:
-# - test attempt to set an incorrect encoding with --accept-encoding flag (failing case, cover_sources = False)
 # - test repo with binary file
-
 # - test renamed path with references updated
 # - test renamed path with references to old path still there (failing case, cover_sources = False)
 # - test file changed type (to python) with updated references
@@ -156,7 +154,7 @@ def test_ImportModuleNameExtractor(testdir):
             imne = ImportModuleNameExtractor()
             with open(__file__) as f:
                 output = imne.extract(parse(f.read()))
-            assert output == [('pytest_smartcollect', ['__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', 'helpers', 'plugin'], 0), ('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
+            assert output == [('pytest_smartcollect', ['*'], 0), ('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
     """)
 
     _check_result(
@@ -212,7 +210,6 @@ def test_find_git_repo_root(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_git_repo_root(smart_collector):
@@ -252,7 +249,6 @@ def test_find_all_files(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_all_files(smart_collector):
@@ -297,7 +293,6 @@ def test_find_changed_files(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_changed_files(smart_collector):
@@ -351,7 +346,6 @@ def test_find_changed_members(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_changed_members(smart_collector):
@@ -394,7 +388,6 @@ def test_find_fully_qualified_module_name(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_fully_qualified_module_name(smart_collector):
@@ -447,7 +440,6 @@ def test_find_imports_package_relative(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_imports_package_relative(smart_collector):
@@ -501,7 +493,6 @@ def test_find_imports_package_external(testdir):
                     1,
                     'master',
                     False,
-                    ['utf-8'],
                     logging.getLogger()
                 )
             def test_find_imports_package_external(smart_collector):
