@@ -7,6 +7,7 @@ import typing
 import logging
 from git import Repo
 from importlib import import_module
+from chardet import UniversalDetector
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
@@ -65,15 +66,12 @@ class ImportModuleNameExtractor(GenericVisitor):
         super(ImportModuleNameExtractor, self).__init__()
 
     def visit_Import(self, node):
-        imp = import_module(node.names[0].name)
-        self.cache.append((node.names[0].name, dir(imp), 0))
+        #imp = import_module(node.names[0].name)
+        self.cache.append((node.names[0].name, [], 0))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         names = list(map(lambda x: x.name, node.names))
-        if '*' in names:
-            imp = import_module(node.module)
-            names = dir(imp)
         self.cache.append((node.module, names, node.level))
         self.generic_visit(node)
 
@@ -88,26 +86,56 @@ class SmartCollector(object):
         self.allow_preemptive_failures = allow_preemptive_failures
         self.accept_encoding = accept_encoding
         self.logger = logger
+        self._encoding_detector = UniversalDetector()
 
     def read_file(self, fpath):
-        for enc in self.accept_encoding:
-            try:
-                with open(fpath, encoding=enc) as f:
-                    lines = f.readlines()
+        # for enc in self.accept_encoding:
+        #     try:
+        #         with open(fpath, encoding=enc) as f:
+        #             lines = f.readlines()
+        #
+        #         contents = ''.join(lines)
+        #         linecount = len(lines)
+        #         ast.parse(contents) # to test whether the encoding is a match ;)
+        #
+        #     except SyntaxError:
+        #         continue
+        #
+        #     except Exception as e:
+        #         raise Exception("Couldn't read file '%s' -- %s", (fpath, str(e)))
+        #
+        #     return contents, linecount
+        #
+        # raise Exception("Couldn't read file '%s' using any of the specified encodings" % fpath)
 
-                contents = ''.join(lines)
-                linecount = len(lines)
-                ast.parse(contents) # to test whether the encoding is a match ;)
+        self._encoding_detector.reset()
 
-            except SyntaxError:
-                continue
+        f = open(fpath, "rb")
+        for line in f.readlines():
+            self._encoding_detector.feed(line)
+            if self._encoding_detector.done:
+                break
+        f.close()
 
-            except Exception as e:
-                raise Exception("Couldn't read file '%s' -- %s", (fpath, str(e)))
+        if self._encoding_detector.result['encoding'] is None:
+            enc = 'utf-8'
 
-            return contents, linecount
+        else:
+            enc = self._encoding_detector.result['encoding'].lower()
 
-        raise Exception("Couldn't read file '%s' using any of the specified encodings" % fpath)
+        with open(fpath, encoding=enc) as f:
+            lines = f.readlines()
+
+        contents = ''.join(lines)
+        linecount = len(lines)
+
+        try:
+            ast.parse(contents)
+
+        except Exception as e:
+            raise Exception("Couldn't read file '%s' -- %s" % (fpath, str(e)))
+
+        return contents, linecount
 
     def find_git_repo_root(self, dir: str) -> str:
         if ".git" in os.listdir(dir):
@@ -160,11 +188,16 @@ class SmartCollector(object):
 
             if d.change_type == 'A':  # added paths
                 filepath = os.path.join(repo_path, d.a_path)
+                if os.path.splitext(filepath)[-1] != '.py':
+                    continue
+
                 _, linecount = self.read_file(filepath)
                 changed_lines = [range(1, linecount)]
 
             elif d.change_type == 'M':  # modified paths
                 filepath = os.path.join(repo_path, d.a_path)
+                if os.path.splitext(filepath)[-1] != '.py':
+                    continue
                 ranges = diff_lines_spec.split(' ')
                 if len(ranges) < 2:
                     start, count = ranges[0].split(',')
@@ -193,15 +226,21 @@ class SmartCollector(object):
 
             elif d.change_type == 'D':  # deleted paths
                 filepath = os.path.join(repo_path, d.a_path)
+                if os.path.splitext(filepath)[-1] != '.py':
+                    continue
 
             elif d.change_type == 'R':  # renamed paths
                 filepath = os.path.join(repo_path, d.b_path)
+                if os.path.splitext(filepath)[-1] != '.py':
+                    continue
                 old_filepath = os.path.join(repo_path, d.a_path)
                 _, linecount = self.read_file(filepath)
                 changed_lines = [range(1, linecount)]
 
             elif d.change_type == 'T':  # changed file types
                 filepath = os.path.join(repo_path, d.b_rawpath)
+                if os.path.splitext(filepath)[-1] != '.py':
+                    continue
                 old_filepath = os.path.join(repo_path, d.a_path)
                 _, linecount = self.read_file(filepath)
                 changed_lines = [range(1, linecount)]
@@ -278,21 +317,19 @@ class SmartCollector(object):
         # in this function, we are looking for imports of the module specified by module_path in any python files under repo_root
         found = []
         module_name_extractor = ImportModuleNameExtractor()
-
         for root, _, files in os.walk(repo_root):
             for f in files:
                 if os.path.splitext(f)[-1] == ".py":
                     path = os.path.join(root, f)
                     contents, _ = self.read_file(path)
+                    package_path = os.path.dirname(os.path.join(root, f))
                     a = ast.parse(contents)
                     for (module, _, _) in module_name_extractor.extract(a):
-                        # # determine whether or not the module is part of the standard library
+                        # determine whether or not the module is part of the standard library
                         if module in sys.builtin_module_names:
                             continue
 
                         # determine if the imported module is relative to it's containing package or outside of it
-                        package_path = os.path.dirname(os.path.join(root, f))
-
                         if os.path.isfile(os.path.join(package_path, "%s.py" % module)) or os.path.isdir(os.path.join(package_path, module)):
                             # in the same package
                             fully_qualified_module_name = self.find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
@@ -324,6 +361,10 @@ class SmartCollector(object):
 
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
         git_repo_root = self.find_git_repo_root(self.rootdir)
+        all_changed_names = []
+
+        for changed_name_list in change_map.values():
+            all_changed_names.extend(changed_name_list)
 
         if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
             chain.insert(0, "%s::%s" % (path, object_name))
@@ -345,6 +386,12 @@ class SmartCollector(object):
         obj = None
         for child in ast.iter_child_nodes(module_ast):
             if isinstance(child, ast.FunctionDef) or isinstance(child, ast.ClassDef) and child.name == object_name:
+                if isinstance(child, ast.ClassDef):
+                    for base in child.bases:
+                        if base.id in all_changed_names:
+                            chain.insert(0, "%s::%s" % (path, object_name))
+                            return True
+
                 obj = child
 
             else:
@@ -376,6 +423,10 @@ class SmartCollector(object):
                         import_level -= 1
 
                     module_name = '.'.join(module_name)
+
+            if len(imported_names) == 0 or '*' in imported_names:
+                imp = import_module(module_name)
+                imported_names = dir(imp)
 
             i = import_module(module_name)
 
@@ -439,7 +490,7 @@ class SmartCollector(object):
                     raise e
 
                 else:
-                    self.logger.warning(str(e))
+                    self.logger.warning("triggered by preemptive failure: " + str(e))
 
             else:
                 if len(found) > 0:
@@ -462,7 +513,7 @@ class SmartCollector(object):
                     raise e
 
                 else:
-                    self.logger.warning(str(e))
+                    self.logger.warning("triggered by preemptive failure: " + str(e))
 
             else:
                 if len(found) > 0:
