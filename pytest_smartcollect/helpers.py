@@ -389,7 +389,7 @@ class SmartCollector(object):
                 if isinstance(child, ast.ClassDef):
                     for base in child.bases:
                         if base.id in all_changed_names:
-                            chain.insert(0, "%s::%s" % (path, object_name))
+                            chain.insert(0, "%s::%s (%s)" % (path, object_name, base.id))
                             return True
 
                 obj = child
