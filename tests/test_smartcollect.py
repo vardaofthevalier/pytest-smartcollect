@@ -542,7 +542,7 @@ def test_filter_ignore_sources(testdir):
 
     _check_result(
         testdir,
-        ["--smart-collect", "--commit-range", "1", "--ignore-source", os.path.join(testdir.tmpdir.dirpath(), "test_foo.py")],
+        ["--smart-collect", "--commit-range", "1", "--ignore-source", os.path.join(os.path.abspath("."), "test_foo.py")],
         ["*1 skipped in * seconds*"],
         lambda x: x == 0,
         #cover_sources=False
