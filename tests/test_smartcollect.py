@@ -156,7 +156,7 @@ def test_ImportModuleNameExtractor(testdir):
             imne = ImportModuleNameExtractor()
             with open(__file__) as f:
                 output = imne.extract(parse(f.read()))
-            assert output == [('pytest_smartcollect', ['__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', 'helpers', 'plugin'], 0), ('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
+            assert output == [('pytest_smartcollect', ['*'], 0), ('ast', ['parse'], 0), ('pytest_smartcollect.helpers',['ImportModuleNameExtractor'], 0)]
     """)
 
     _check_result(
@@ -212,7 +212,6 @@ def test_find_git_repo_root(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_git_repo_root(smart_collector):
@@ -252,7 +251,6 @@ def test_find_all_files(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_all_files(smart_collector):
@@ -297,7 +295,6 @@ def test_find_changed_files(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_changed_files(smart_collector):
@@ -351,7 +348,6 @@ def test_find_changed_members(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_changed_members(smart_collector):
@@ -394,7 +390,6 @@ def test_find_fully_qualified_module_name(testdir):
                 1,
                 'master',
                 False,
-                ['utf-8'],
                 logging.getLogger()
             )
         def test_find_fully_qualified_module_name(smart_collector):
