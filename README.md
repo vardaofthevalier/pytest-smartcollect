@@ -20,24 +20,21 @@ Features
 ========
 
 - Filters collected tests according to the following criteria:
-
-    -   If a test contains references to changed code, the test will be selected to run.
-    -   If a test is new or changed, or if it failed in the previous
-            run, it will run regardless of changes to the code that it
-            tests.
-    -   If a preexisting test function that is unchanged imports and
-            uses a module member that was not modified within the
-            specified commit range, the test will be skipped.
-    -   If any paths are specified using one or more --ignore-source
-            flags, those files will be considered "unchanged" for the
-            purposes of filtering the tests.
+    1. The test test function body has changed lines
+    2. The test function body uses a changed member from another module
+    
+- Recursively detects changes in both composition (in the case of function and class definitions) and inheritance (in the case of class definitions only).
 
 How it works
 ============
 
-File changes (including paths and changed lines) are discovered from the output of `git diff`.  This information is later used to determine which "members" of a given module were changed between commits.  
+File changes (including paths and changed lines) are discovered from the output of `git diff`.  This information is then used to determine which "members" of a given module were changed between commits.  Members include any names that can be imported from a module, including assignments, function definitions and class definitions.
 
-A particular test will run if there exists any change in it's dependency hierarchy, starting with the test itself.  If the test is changed or new, it will be selected to run regardless of any other changes.  Otherwise, dependency changes are determined by recursively parsing Abstract Sytax Trees within the project using the ast module.  This process begins by parsing the AST for the test file, then resolving imported names within the test module to file names of the respecive modules installed in the environment.  Once this resolution has occurred, the imported module file's AST will also be parsed in the same way recursively.  If at any time a changed member is found, the test will be considered to have a changed dependency and will be selected to run.  Otherwise, the test will be skipped. 
+A particular test will run if there exists any change in it's dependency hierarchy, starting with the test itself.  If the test is changed or contained in a new file, it will be selected to run regardless of any other changes.  Otherwise, dependency changes are determined by recursively parsing Abstract Sytax Trees within the project using the ast module.  
+
+This process begins by parsing the AST for the test module, then resolving imported names within the test module to file names of their respective modules installed in the environment.  Once this resolution has occurred, the test object is located in the test module AST and a number of checks are performed on the test function in order to determine whether or not it should be considered changed.  
+
+For each assignment found in the body of the object currently under inspection (which would be the test function itself on the first recursive call), the object name on the right hand side of the assignment will be cross checked in the imported names that were resolved for the outer scope.  If the object is known to be changed, the recursion will terminate (True) and the test will run.  If the object name was imported from another module within the project and is not yet known to be changed, the algorithm will recurse on this imported module in order to check whether or not the new object in question (the RHS of the assignment) is changed.  If at any time a changed member is found at the module, function or class method scope, or if a class's bases are changed, the test will be considered to have a changed dependency and will be selected to run.  Otherwise, the test will be skipped. 
 
 Requirements
 ============
@@ -75,7 +72,10 @@ smart collection:
 | --ignore-source | Specifies a filepath within the git repo that should be ignored during smart collection. Multiple instances of this flag are supported. |
 | --allow-preemptive-failures | Preemptive failures include scenarios where deleted/renamed/moved/copied files are referenced by their old names somewhere in the project. If unset, warning messages will be logged only. |
 
-*Note*: 
+*Important Notes*: 
+-   Results depend on sources being kept up-to-date for any branches that you plan to calculate diffs between, so be sure to manage your local source branches accordingly.
+-   The depencency checking algorithm requires the head of the current branch to be installed in the currently active python environment in order to resolve imports recursively, so it's important to remember to (re)install whatever version of your package you're interested running smart collection for after pulling or making any local commits of changes.  This functionality may change or be improved in the future, but this is how it's implemented currently.
+
 -   If --rootdir is unset, rootdir is assumed to be the current working
     directory from where the command was run.
 -   Setting --log-level=INFO will print additional information about
