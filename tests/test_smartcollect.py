@@ -664,6 +664,67 @@ def test_run_smart_collection(testdir):
         lambda x: x == 0
     )
 
+def test_recursive_base_dependencies(testdir):
+    Repo.init(".")
+
+    testdir.makepyfile(grandparent="""
+        class Grandparent(object):
+            def __init__(self):
+                pass
+    """)
+
+    testdir.makepyfile(test_foo="""
+        def test_foo():
+            assert 1 == 1
+    """)
+
+    testdir.makepyfile(parent="""
+        from grandparent import Grandparent
+        class Parent(Grandparent):
+            def __init__(self, val):
+                self.val = val
+    """)
+
+    testdir.makepyfile(test_parent="""
+        def test_parent():
+            from parent import Parent
+            p = Parent(42)
+            assert p.val == 42
+    """)
+
+    testdir.makepyfile(child="""
+        from parent import Parent
+        class Child(Parent):
+            def __init__(self, val):
+                super(Child, self).__init__(val)
+    """)
+
+    testdir.makepyfile(test_child="""
+        def test_child():
+            from child import Child
+            c = Child(42)
+            assert c.val == 42
+    """)
+
+    r = Repo(".")
+    r.index.add(["grandparent.py", "parent.py", "child.py", "test_parent.py", "test_child.py", "test_foo.py"])
+    r.index.commit("First commit")
+
+    # change grandparent
+    with open("grandparent.py", "w") as f:
+        f.write("class Grandparent(object):\n\tdef __init__(self, val):\n\t\tself.val = val")
+
+    r.index.add(["grandparent.py"])
+    r.index.commit("Second commit")
+
+    # only test_parent and test_child should run
+    _check_result(
+        testdir,
+        ["--smart-collect", "--commit-range", "1"],
+        ["*2 passed, 1 skipped in * seconds*"],
+        lambda x: x == 0
+    )
+
 
 def test_generate_coverage_report(coverage_report_directory):
     cov = Coverage()
