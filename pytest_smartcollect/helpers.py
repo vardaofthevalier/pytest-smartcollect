@@ -341,10 +341,6 @@ class SmartCollector(object):
 
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
         git_repo_root = self.find_git_repo_root(self.rootdir)
-        # all_changed_names = []
-        #
-        # for changed_name_list in change_map.values():
-        #     all_changed_names.extend(changed_name_list)
 
         if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
             chain.insert(0, "%s::%s" % (path, object_name))
@@ -479,7 +475,7 @@ class SmartCollector(object):
                     raise e
 
                 else:
-                    self.logger.warning("triggered by preemptive failure: " + str(e))
+                    self.logger.info("triggered by preemptive failure check: " + str(e))
 
             else:
                 if len(found) > 0:
@@ -490,7 +486,7 @@ class SmartCollector(object):
                     if self.allow_preemptive_failures:
                         raise Exception(msg)
 
-                    self.logger.warning(msg)
+                    self.logger.info(msg)
 
         for renamed in renamed_files.values():
             # check if any renamed files are imported by their old name
@@ -502,7 +498,7 @@ class SmartCollector(object):
                     raise e
 
                 else:
-                    self.logger.warning("triggered by preemptive failure: " + str(e))
+                    self.logger.info("triggered by preemptive failure check: " + str(e))
 
             else:
                 if len(found) > 0:
@@ -514,7 +510,7 @@ class SmartCollector(object):
                     if self.allow_preemptive_failures:
                         raise Exception(msg)
 
-                    self.logger.warning(msg)
+                    self.logger.info(msg)
 
         changed_to_py = {}
         for changed_filetype in changed_filetype_files.values():
@@ -530,7 +526,7 @@ class SmartCollector(object):
                     if self.allow_preemptive_failures:
                         raise Exception(msg)
 
-                    self.logger.warning(msg)
+                    self.logger.info(msg)
 
             elif os.path.splitext(changed_filetype.current_filepath) == ".py":
                 changed_to_py[changed_filetype.current_filepath] = changed_filetype
@@ -551,13 +547,13 @@ class SmartCollector(object):
         for test in items:
             # if the test is new, run it anyway
             if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
-                self.logger.warning("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
+                self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
                 test_count += 1
                 continue
 
             # if the test failed in the last run, run it anyway
             if test.nodeid in self.lastfailed:
-                self.logger.warning("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
+                self.logger.info("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
                 test_count += 1
                 continue
 
@@ -569,7 +565,7 @@ class SmartCollector(object):
             # otherwise, check the dependency chain
             chain = []
             if self.dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_members_and_modules, chain):  # TODO: figure out a better way to handle test names of parameterized tests
-                self.logger.warning(
+                self.logger.info(
                     "Test '%s' will run because one of it's dependencies changed (%s)" % (test.nodeid, ' -> '.join(chain)))
                 test_count += 1
                 continue
@@ -579,7 +575,7 @@ class SmartCollector(object):
                 skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                 test.add_marker(skip)
 
-        self.logger.warning("Total tests selected to run: " + str(test_count))
+        self.logger.info("Total tests selected to run: " + str(test_count))
 
 
 
