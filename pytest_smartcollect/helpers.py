@@ -86,6 +86,7 @@ class SmartCollector(object):
         self.diff_current_head_with_branch = diff_current_head_with_branch
         self.allow_preemptive_failures = allow_preemptive_failures
         self.logger = logger
+        self.packages = []
         self.encoding_detector = UniversalDetector()
 
     def read_file(self, fpath):
@@ -463,10 +464,10 @@ class SmartCollector(object):
         return False
 
     def run(self, items):
-        try:
-            git_repo_root = self.find_git_repo_root(self.rootdir) # recursive function still needs the parameter even though the initial value is a member of self
-            self.packages = self.find_packages(self.rootdir)
+        git_repo_root = self.find_git_repo_root(self.rootdir)  # recursive function still needs the parameter even though the initial value is a member of self
+        self.packages = self.find_packages(self.rootdir)
 
+        try:
             for p in self.packages:
                 sys.path.insert(0, p)
 
@@ -595,7 +596,7 @@ class SmartCollector(object):
                     skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                     test.add_marker(skip)
 
-            self.logger.info("Total tests selected to run: " + str(test_count))
+            self.logger.warning("Total tests selected to run: " + str(test_count))
             self._revert_syspath()
 
         except Exception as e:
