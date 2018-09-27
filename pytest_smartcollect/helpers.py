@@ -76,6 +76,22 @@ class ImportModuleNameExtractor(GenericVisitor):
         self.generic_visit(node)
 
 
+class FixtureExtractor(GenericVisitor):
+    def __init__(self):
+        super(FixtureExtractor, self).__init__()
+
+    def visit_FunctionDef(self, node):
+        if len(node.decorator_list) > 0:
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Attribute):
+                    if dec.attr == 'fixture':
+                        self.cache.append(node)
+
+                elif isinstance(dec, ast.Name):
+                    if dec.id == 'fixture':
+                        self.cache.append(node)
+
+
 class SmartCollector(object):
     def __init__(self, rootdir: str, lastfailed: ListOfString, ignore_source: ListOfString, commit_range: int, diff_current_head_with_branch: str, allow_preemptive_failures: bool, logger: logging.Logger):
         self.rootdir = rootdir
@@ -376,6 +392,7 @@ class SmartCollector(object):
         extracted_imports = imne.extract(module_ast)
 
         for (module_name, imported_names, import_level) in extracted_imports:
+            self.logger.warning("imported names in file %s: %s" % (path, ', '.join(imported_names)))
             if module_name in sys.builtin_module_names: # we can safely assume that builtin module changes aren't relevant
                 continue
 
@@ -448,6 +465,8 @@ class SmartCollector(object):
         return False
 
     def run(self, items):
+        log_records = []
+
         git_repo_root = self.find_git_repo_root(self.rootdir) # recursive function still needs the parameter even though the initial value is a member of self
 
         repo = Repo(git_repo_root)
@@ -542,40 +561,115 @@ class SmartCollector(object):
 
         # determine all changed members of each of the changed files (if applicable)
         changed_members_and_modules = {path: self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items() }
-
         test_count = 0
+        fixture_map = {}
+        ast_map = {}
         for test in items:
+            test_name = test.name.split('[')[0] # TODO: figure out a better way to handle test names of parameterized tests
+
             # if the test is new, run it anyway
             if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
+                log_records.append(
+                    ('RUN', test.nodeid, "New test")
+                )
                 self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
                 test_count += 1
                 continue
 
             # if the test failed in the last run, run it anyway
             if test.nodeid in self.lastfailed:
+                log_records.append(
+                    ('RUN', test.nodeid, "Failed on last run")
+                )
                 self.logger.info("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
                 test_count += 1
                 continue
 
             # if the test is already skipped, just ignore it
             if test.get_marker('skip'):
+                log_records.append(
+                    ('SKIP', test.nodeid, "Found skip marker")
+                )
                 self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
                 continue
 
-            # otherwise, check the dependency chain
+            # check dependencies within any defined fixtures
+            if str(test.fspath) in ast_map.keys():
+                test_file_ast = ast_map[str(test.fspath)]
+
+            else:
+                contents, _ = self.read_file(str(test.fspath))
+                test_file_ast = ast.parse(contents)
+                ast_map[str(test.fspath)] = test_file_ast
+
+            test_node = None
+            for child in ast.iter_child_nodes(test_file_ast):
+                if isinstance(child, ast.ClassDef):
+                    for subchild in ast.iter_child_nodes(child):
+                        if isinstance(subchild, ast.FunctionDef) and subchild.name == test_name:
+                            test_node = subchild
+                            break
+
+                    if test_node is not None:
+                        break
+
+                elif isinstance(child, ast.FunctionDef) and child.name == test_name:
+                    test_node = child
+                    break
+
+            assert test_node is not None
+
+            if str(test.fspath) not in fixture_map.keys():
+                fixture_extractor = FixtureExtractor()
+                fixtures = fixture_extractor.extract(test_file_ast)
+
+                fixture_map[str(test.fspath)] = fixtures
+
+            found_changed_fixture = False
+            for fixture in fixture_map[str(test.fspath)]:
+                for arg in test_node.args.args:
+                    if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, []):
+                        log_records.append(
+                            ('RUN', test.nodeid, "Uses changed fixture")
+                        )
+                        self.logger.info("Test '%s' will run because it uses a changed fixture (%s)" % (test.nodeid, fixture.name))
+                        test_count += 1
+                        found_changed_fixture = True
+                        break
+
+                if found_changed_fixture:
+                    break
+
+            if found_changed_fixture:
+                continue
+
+            # otherwise, check the dependency chain from inside the test function
             chain = []
-            if self.dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_members_and_modules, chain):  # TODO: figure out a better way to handle test names of parameterized tests
+            if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, chain):
+                log_records.append(
+                    ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
+                )
                 self.logger.info(
                     "Test '%s' will run because one of it's dependencies changed (%s)" % (test.nodeid, ' -> '.join(chain)))
                 test_count += 1
                 continue
 
             else:
+                log_records.append(
+                    ('SKIP', test.nodeid, "Unchanged")
+                )
                 self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
                 skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                 test.add_marker(skip)
 
-        self.logger.info("Total tests selected to run: " + str(test_count))
+        self.logger.warning("Total tests selected to run: " + str(test_count))
+        import csv
+        with open("results.csv", "w") as csvfile:
+            csvwriter = csv.writer(csvfile)
+            for row in log_records:
+                csvwriter.writerow(list(row))
+
+        self.logger.warning(changed_members_and_modules)
 
 
 
