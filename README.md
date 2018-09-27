@@ -74,7 +74,6 @@ smart collection:
 
 *Important Notes*: 
 -   Results depend on sources being kept up-to-date for any branches that you plan to calculate diffs between, so be sure to manage your local source branches accordingly.
--   The dependency checking algorithm requires the head of the current branch to be installed in the currently active python environment in order to resolve imports recursively, so it's important to remember to (re)install whatever version of your package you're interested running smart collection for after pulling or making any local commits of changes.  This functionality may change or be improved in the future, but this is how it's implemented currently.
 
 -   If --rootdir is unset, rootdir is assumed to be the current working
     directory from where the command was run.
@@ -93,8 +92,6 @@ git checkout -b my_new_branch
 # Add and commit changes on my_new_branch
 git add -A
 git commit -m "Wow, these are great changes!"
-# Install your changed package with pip
-pip install -U path/to/my_changed_package
 # Run smart collection to test only the changes you made.  The command below will diff the head of the currently checked out branch with the master branch by default.
 pytest --smart-collect
 ```

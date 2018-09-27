@@ -413,19 +413,12 @@ def test_find_imports_package_relative(testdir):
         def hello():
             pass
     """)
-    testdir.makepyfile(setup="""
-        from setuptools import setup
-        setup(
-            name='foo',
-            version='0.1.0',
-            packages=['foo']
-        )
-    """)
 
     move(os.path.join("foo.py"), os.path.join("foo", "foo.py"))
     move(os.path.join("bar.py"), os.path.join("foo", "bar.py"))
 
-    pip(['install', '-U', '.'])
+    # with open(os.path.join('foo', '__init__.py'), 'w') as f:
+    #     f.write('from foo.foo import *\nfrom foo.bar import *\n')
 
     testdir.makepyfile("""
         import logging
@@ -444,7 +437,9 @@ def test_find_imports_package_relative(testdir):
             )
         def test_find_imports_package_relative(smart_collector):
             import os
-            found = smart_collector.find_import(r"%s", r"%s")
+            packages = SmartCollector.find_packages('.')
+            assert len(packages) == 1
+            found = smart_collector.find_import(r"%s", r"%s", packages)
             assert len(found) == 1
             assert os.path.basename(found[0]) == os.path.basename(r"%s")
     """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
@@ -461,24 +456,20 @@ def test_find_imports_package_external(testdir):
     testdir.mkpydir("foo")
     testdir.mkpydir("baz")
 
-    testdir.makepyfile(zoo="from baz.bar import hello")
+    testdir.makepyfile(zoo="import baz.bar\nfrom baz.bar import hello")
     testdir.makepyfile(bar="""
             def hello():
                 pass
         """)
-    testdir.makepyfile(setup="""
-            from setuptools import setup
-            setup(
-                name='test',
-                version='0.1.0',
-                packages=['foo', 'baz']
-            )
-        """)
+
+    # with open(os.path.join('foo', '__init__.py'), 'w') as f:
+    #     f.write('from foo.zoo import *')
+    #
+    # with open(os.path.join('baz', '__init__.py'), 'w') as f:
+    #     f.write('from baz.bar import *')
 
     move(os.path.join("zoo.py"), os.path.join("foo", "zoo.py"))
     move(os.path.join("bar.py"), os.path.join("baz", "bar.py"))
-
-    pip(['install', '-U', '.'])
 
     testdir.makepyfile("""
             import logging
@@ -497,7 +488,9 @@ def test_find_imports_package_external(testdir):
                 )
             def test_find_imports_package_external(smart_collector):
                 import os
-                found = smart_collector.find_import(r"%s", r"%s")
+                packages = SmartCollector.find_packages('.')
+                assert len(packages) == 2
+                found = smart_collector.find_import(r"%s", r"%s", packages)
                 assert len(found) == 1
                 assert os.path.basename(found[0]) == os.path.basename(r"%s")
         """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
