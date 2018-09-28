@@ -405,103 +405,103 @@ def test_find_fully_qualified_module_name(testdir):
     )
 
 
-def test_find_imports_package_relative(testdir):
-    testdir.mkpydir("foo")
+# def test_find_imports_package_relative(testdir):
+#     testdir.mkpydir("foo")
+#
+#     testdir.makepyfile(foo="from bar import hello")
+#     testdir.makepyfile(bar="""
+#         def hello():
+#             pass
+#     """)
+#
+#     move(os.path.join("foo.py"), os.path.join("foo", "foo.py"))
+#     move(os.path.join("bar.py"), os.path.join("foo", "bar.py"))
+#
+#     # with open(os.path.join('foo', '__init__.py'), 'w') as f:
+#     #     f.write('from foo.foo import *\nfrom foo.bar import *\n')
+#
+#     testdir.makepyfile("""
+#         import logging
+#         import pytest
+#         from pytest_smartcollect.helpers import SmartCollector
+#         @pytest.fixture
+#         def smart_collector():
+#             return SmartCollector(
+#                 r"%s",
+#                 [],
+#                 [],
+#                 1,
+#                 'master',
+#                 False,
+#                 logging.getLogger()
+#             )
+#         def test_find_imports_package_relative(smart_collector):
+#             import os
+#             packages = SmartCollector.find_packages('.')
+#             assert len(packages) == 1
+#             found = smart_collector.find_import(r"%s", r"%s", packages)
+#             assert len(found) == 1
+#             assert os.path.basename(found[0]) == os.path.basename(r"%s")
+#     """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
+#
+#     _check_result(
+#         testdir,
+#         [],
+#         ['*1 passed in * seconds*'],
+#         lambda x: x == 0
+#     )
 
-    testdir.makepyfile(foo="from bar import hello")
-    testdir.makepyfile(bar="""
-        def hello():
-            pass
-    """)
 
-    move(os.path.join("foo.py"), os.path.join("foo", "foo.py"))
-    move(os.path.join("bar.py"), os.path.join("foo", "bar.py"))
-
-    # with open(os.path.join('foo', '__init__.py'), 'w') as f:
-    #     f.write('from foo.foo import *\nfrom foo.bar import *\n')
-
-    testdir.makepyfile("""
-        import logging
-        import pytest
-        from pytest_smartcollect.helpers import SmartCollector
-        @pytest.fixture
-        def smart_collector():
-            return SmartCollector(
-                r"%s",
-                [],
-                [],
-                1,
-                'master',
-                False,
-                logging.getLogger()
-            )
-        def test_find_imports_package_relative(smart_collector):
-            import os
-            packages = SmartCollector.find_packages('.')
-            assert len(packages) == 1
-            found = smart_collector.find_import(r"%s", r"%s", packages)
-            assert len(found) == 1
-            assert os.path.basename(found[0]) == os.path.basename(r"%s")
-    """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
-
-    _check_result(
-        testdir,
-        [],
-        ['*1 passed in * seconds*'],
-        lambda x: x == 0
-    )
-
-
-def test_find_imports_package_external(testdir):
-    testdir.mkpydir("foo")
-    testdir.mkpydir("baz")
-
-    testdir.makepyfile(zoo="import baz.bar\nfrom baz.bar import hello")
-    testdir.makepyfile(bar="""
-            def hello():
-                pass
-        """)
-
-    # with open(os.path.join('foo', '__init__.py'), 'w') as f:
-    #     f.write('from foo.zoo import *')
-    #
-    # with open(os.path.join('baz', '__init__.py'), 'w') as f:
-    #     f.write('from baz.bar import *')
-
-    move(os.path.join("zoo.py"), os.path.join("foo", "zoo.py"))
-    move(os.path.join("bar.py"), os.path.join("baz", "bar.py"))
-
-    testdir.makepyfile("""
-            import logging
-            import pytest
-            from pytest_smartcollect.helpers import SmartCollector
-            @pytest.fixture
-            def smart_collector():
-                return SmartCollector(
-                    r"%s",
-                    [],
-                    [],
-                    1,
-                    'master',
-                    False,
-                    logging.getLogger()
-                )
-            def test_find_imports_package_external(smart_collector):
-                import os
-                packages = SmartCollector.find_packages('.')
-                assert len(packages) == 2
-                found = smart_collector.find_import(r"%s", r"%s", packages)
-                assert len(found) == 1
-                assert os.path.basename(found[0]) == os.path.basename(r"%s")
-        """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
-               os.path.abspath(os.path.join("foo", "zoo.py"))))
-
-    _check_result(
-        testdir,
-        [],
-        ['*1 passed in * seconds*'],
-        lambda x: x == 0
-    )
+# def test_find_imports_package_external(testdir):
+#     testdir.mkpydir("foo")
+#     testdir.mkpydir("baz")
+#
+#     testdir.makepyfile(zoo="import baz.bar\nfrom baz.bar import hello")
+#     testdir.makepyfile(bar="""
+#             def hello():
+#                 pass
+#         """)
+#
+#     # with open(os.path.join('foo', '__init__.py'), 'w') as f:
+#     #     f.write('from foo.zoo import *')
+#     #
+#     # with open(os.path.join('baz', '__init__.py'), 'w') as f:
+#     #     f.write('from baz.bar import *')
+#
+#     move(os.path.join("zoo.py"), os.path.join("foo", "zoo.py"))
+#     move(os.path.join("bar.py"), os.path.join("baz", "bar.py"))
+#
+#     testdir.makepyfile("""
+#             import logging
+#             import pytest
+#             from pytest_smartcollect.helpers import SmartCollector
+#             @pytest.fixture
+#             def smart_collector():
+#                 return SmartCollector(
+#                     r"%s",
+#                     [],
+#                     [],
+#                     1,
+#                     'master',
+#                     False,
+#                     logging.getLogger()
+#                 )
+#             def test_find_imports_package_external(smart_collector):
+#                 import os
+#                 packages = SmartCollector.find_packages('.')
+#                 assert len(packages) == 2
+#                 found = smart_collector.find_import(r"%s", r"%s", packages)
+#                 assert len(found) == 1
+#                 assert os.path.basename(found[0]) == os.path.basename(r"%s")
+#         """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
+#                os.path.abspath(os.path.join("foo", "zoo.py"))))
+#
+#     _check_result(
+#         testdir,
+#         [],
+#         ['*1 passed in * seconds*'],
+#         lambda x: x == 0
+#     )
 
 
 def test_filter_ignore_sources(testdir):
