@@ -7,7 +7,6 @@ import typing
 import logging
 from git import Repo
 from importlib import import_module
-from importlib.machinery import SourceFileLoader
 from chardet import UniversalDetector
 
 ListOrNone = typing.Union[list, None]
@@ -49,22 +48,6 @@ class ObjectNameExtractor(GenericVisitor):
         for child in ast.walk(node):
             if isinstance(child, ast.Name):
                 self.cache.append(child.id)
-        # if isinstance(node.func, ast.Name):
-        #     self.cache.append(node.func.id)
-        #
-        # elif isinstance(node.func, ast.Attribute):
-        #     current = node.func.value
-        #
-        #     while True:
-        #         if not isinstance(current, ast.Name) or not isinstance(current, ast.Attribute):
-        #             break
-        #
-        #         elif isinstance(current, ast.Name):
-        #             self.cache.append(current.id)
-        #             break
-        #
-        #         else:
-        #             current = current.value
 
 
 class DefinitionNodeExtractor(GenericVisitor):
@@ -76,6 +59,7 @@ class DefinitionNodeExtractor(GenericVisitor):
 
     def visit_ClassDef(self, node):
         self.cache.append(node)
+        self.generic_visit(node)
 
 
 class ImportModuleNameExtractor(GenericVisitor):
@@ -84,12 +68,10 @@ class ImportModuleNameExtractor(GenericVisitor):
 
     def visit_Import(self, node):
         self.cache.append((node.names[0].name, [], 0))
-        #self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         names = list(map(lambda x: x.name, node.names))
         self.cache.append((node.module, names, node.level))
-        #self.generic_visit(node)
 
 
 class FixtureExtractor(GenericVisitor):
@@ -356,114 +338,7 @@ class SmartCollector(object):
 
         return True
 
-    def build_project_adjacency_list(self, project_dir: str) -> typing.Dict[typing.Tuple[str, str], typing.List[typing.Tuple[str, str]]]: # TODO: dict of what?
-        project_graph = {}
-        import_extractor = ImportModuleNameExtractor()
-
-        for root, _, files in os.walk(project_dir):
-            for f in files:
-                abspath = os.path.abspath(os.path.join(root, f))
-
-                if any([os.path.commonpath([ignore, abspath]) == ignore for ignore in self.ignore_source]):
-                    continue
-
-                if os.path.splitext(abspath)[-1] == ".py":
-                    current_module = self.find_fully_qualified_module_name(abspath)
-                    contents, _ = self.read_file(abspath)
-                    st = ast.parse(contents)
-
-                    name_extractor = ObjectNameExtractor()
-                    local_names = name_extractor.extract(st)
-
-                    imports = import_extractor.extract(st)
-                    imported_names_and_modules = {}
-                    for (module_name, imported_names, import_level) in imports:
-                        if module_name in sys.builtin_module_names:  # we can safely assume that builtin module changes aren't relevant
-                            continue
-
-                        if module_name is None:  # here we need to find the fully qualified module name for a package relative import
-                            assert import_level > 0
-                            module_name = self.find_fully_qualified_module_name(os.path.dirname(abspath))
-
-                        else:
-                            if import_level > 0:  # another package relative import situation
-                                module_name = [module_name]
-                                src_path = abspath
-                                while import_level > 0:
-                                    src_path = os.path.dirname(src_path)
-                                    module_name.insert(0, os.path.basename(src_path))
-                                    import_level -= 1
-
-                                module_name = '.'.join(module_name)
-
-                        if len(imported_names) == 0 or '*' in imported_names:
-                            try:
-                                imp = import_module(module_name)
-
-                            except ImportError:
-                                continue
-
-                            else:
-                                imported_names = dir(imp)
-
-                        try:
-                            i = import_module(module_name)
-
-                        except ImportError:
-                            continue
-
-                        else:
-                            if hasattr(i, '__file__') and self.file_in_project(project_dir, i.__file__):
-                                for name in imported_names:
-                                    imported_names_and_modules[name] = module_name
-
-                    for child in ast.iter_child_nodes(st):
-                        if isinstance(child, ast.FunctionDef) or isinstance(child, ast.AsyncFunctionDef) or isinstance(child, ast.ClassDef):
-                            if (current_module, child.name) not in project_graph.keys():
-                                project_graph[(current_module, child.name)] = []
-
-                            names = name_extractor.extract(child)
-                            for name in names:
-                                if name in imported_names_and_modules.keys():
-                                    project_graph[(current_module, child.name)].append(
-                                        (imported_names_and_modules[name], name)
-                                    )
-
-                                elif name in local_names:
-                                    project_graph[(current_module, child.name)].append(
-                                        (current_module, name)
-                                    )
-
-                        if isinstance(child, ast.ClassDef):
-                            if (current_module, child.name) not in project_graph.keys():
-                                project_graph[(current_module, child.name)] = []
-
-                            for base in child.bases:
-                                assert isinstance(base, ast.Name) or isinstance(base, ast.Attribute)
-                                if isinstance(base, ast.Name):
-                                    base_name = base.id
-
-                                elif isinstance(base, ast.Attribute):
-                                    current = base.value
-                                    while not isinstance(current, ast.Name):
-                                        current = current.value
-
-                                    base_name = current.id
-
-                                if base_name in imported_names_and_modules.keys():
-                                    project_graph[(current_module, child.name)].append(
-                                        (imported_names_and_modules[base.id], base_name)
-                                    )
-
-                                elif base_name in local_names:
-                                    project_graph[(current_module, child.name)].append(
-                                        (current_module, base_name)
-                                    )
-
-        return project_graph
-
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
-        self.logger.warning("path: %s, object_name: %s" % (path, object_name))
         git_repo_root = self.find_git_repo_root(self.rootdir)
 
         if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
@@ -484,8 +359,11 @@ class SmartCollector(object):
 
         # find the object of interest in the ast
         obj = None
-        for child in ast.iter_child_nodes(module_ast):
-            if (isinstance(child, ast.FunctionDef) or isinstance(child, ast.ClassDef)) and child.name == object_name:
+        definition_extractor = DefinitionNodeExtractor()
+        definition_nodes = definition_extractor.extract(module_ast)
+
+        for child in definition_nodes:
+            if child.name == object_name:
                 obj = child
                 break
 
@@ -553,19 +431,13 @@ class SmartCollector(object):
             for base in obj.bases:
                 if base.id in imported_names_and_modules.keys():
                     base_class_module_paths = imported_names_and_modules[base.id]
-                    for p in base_class_module_paths:
-                        if self.dependencies_changed(p, base.id, change_map, chain):
-                            if p in change_map.keys():
-                                change_map[p].append(base.id)
-
-                            else:
-                                change_map[p] = [base.id]
-
+                    for path in base_class_module_paths:
+                        if self.dependencies_changed(path, base.id, change_map, chain):
                             if path in change_map.keys():
-                                change_map[path].append(object_name)
+                                change_map[path].append(base.id)
 
                             else:
-                                change_map[path] = [object_name]
+                                change_map[path] = [base.id]
 
                             return True
 
@@ -573,8 +445,10 @@ class SmartCollector(object):
         object_name_extractor = ObjectNameExtractor()
         used_names = object_name_extractor.extract(obj)
 
-        self.logger.warning("used names in %s: %s" % (obj.name, ', '.join(used_names)))
         for name in used_names:
+            if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
+                continue
+
             if name in locally_changed:
                 if path in change_map.keys() and name in change_map[path]:
                     return True
@@ -603,8 +477,6 @@ class SmartCollector(object):
             sys.path.insert(0, p)
 
         try:
-            # self.modules = self.find_modules(self.git_repo_root)
-
             repo = Repo(git_repo_root)
 
             total_commits_on_head = len(list(repo.iter_commits("HEAD")))
@@ -635,40 +507,8 @@ class SmartCollector(object):
 
             # determine all changed members of each of the changed files (if applicable)
             changed_members_and_modules = {
-                self.find_fully_qualified_module_name(path): self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items()
+                path: self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items()
             }
-
-            # build the project graph
-            project_graph = self.build_project_adjacency_list(git_repo_root)
-            reverse_graph = {}
-
-            for ((module, item), dependencies) in project_graph.items():
-                for (dep_module, dep_item) in dependencies:
-                    if (dep_module, dep_item) not in reverse_graph.keys():
-                        reverse_graph[(dep_module, dep_item)] = [(module, item)]
-
-                    else:
-                        reverse_graph[(dep_module, dep_item)].append((module, item))
-
-            sorted_reverse_graph = list(reversed(sorted(reverse_graph.items(), key=lambda x: x[1])))
-
-            while len(sorted_reverse_graph) > 0:
-                ((module, item), dependents) = sorted_reverse_graph.pop()
-                for (dep_module, dep_item) in dependents:
-                    if module in changed_members_and_modules.keys() and item in changed_members_and_modules[module]:
-                        if dep_module in changed_members_and_modules.keys():
-                            changed_members_and_modules[dep_module].append(dep_item)
-
-                        else:
-                            changed_members_and_modules[dep_module] = [dep_item]
-
-                    else:
-                        if (dep_module, dep_item) not in reverse_graph.keys():
-                            sorted_reverse_graph.insert(0, ((dep_module, dep_item), []))
-
-
-
-
 
             test_count = 0
             fixture_map = {}
@@ -739,8 +579,7 @@ class SmartCollector(object):
                 found_changed_fixture = False
                 for fixture in fixture_map[str(test.fspath)]:
                     for arg in test_node.args.args:
-                        #if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, []):
-                        if arg.arg == fixture.name and fixture.name in changed_members_and_modules.keys():
+                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, []):
                             log_records.append(
                                 ('RUN', test.nodeid, "Uses changed fixture")
                             )
@@ -756,11 +595,15 @@ class SmartCollector(object):
                 if found_changed_fixture:
                     continue
 
-                if test_name in changed_members_and_modules.keys():
+                # otherwise, check the dependency chain from inside the test function
+                chain = []
+                if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, chain):
                     log_records.append(
-                        ('RUN', test.nodeid, "Dependency changed")
+                        ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
                     )
-                    self.logger.info("Test '%s' will run because one of it's dependencies changed")
+                    self.logger.info(
+                        "Test '%s' will run because one of it's dependencies changed (%s)" % (
+                        test.nodeid, ' -> '.join(chain)))
                     test_count += 1
                     continue
 
@@ -771,25 +614,6 @@ class SmartCollector(object):
                     self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
                     skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                     test.add_marker(skip)
-                # otherwise, check the dependency chain from inside the test function
-                # chain = []
-                # if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, chain):
-                #     log_records.append(
-                #         ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
-                #     )
-                #     self.logger.info(
-                #         "Test '%s' will run because one of it's dependencies changed (%s)" % (
-                #         test.nodeid, ' -> '.join(chain)))
-                #     test_count += 1
-                #     continue
-                #
-                # else:
-                #     log_records.append(
-                #         ('SKIP', test.nodeid, "Unchanged")
-                #     )
-                #     self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
-                #     skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
-                #     test.add_marker(skip)
 
             # TODO: add option to write to csv
             import csv
