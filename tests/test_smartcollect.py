@@ -33,13 +33,11 @@ coverage_files = []
 # - test invalid commit range (failing case, cover_sources = False)
 # - test invalid diff target (failing case, cover_sources = False)
 # - test preemptive failures (failing case, cover_sources = False)
-# - test common dependency of two files
 # - test locally changed dependencies in one file
-# - test scan of test ast containing extraneous objects (not a function or class definition)
-# - test package relative imports using relative import notation
 # - test name collisions in imports across multiple different files
-# - test longer dependency chain changes
 # - test that tests with a skip marker do indeed get skipped
+# - test updates to fixtures
+# - test different file encodings
 
 ListOfString = typing.List[str]
 
@@ -134,7 +132,7 @@ def test_ObjectNameExtractor(testdir):
             one = ObjectNameExtractor()
             with open(__file__) as f:
                 output = one.extract(parse(f.read()))
-            assert output == ['ObjectNameExtractor', 'open', 'parse']
+            assert output == ['ObjectNameExtractor', 'open', '__file__', 'one', 'parse', 'f']
     """)
 
     _check_result(
@@ -178,11 +176,13 @@ def test_DefinitionNodeExtractor(testdir):
             with open(__file__) as f:
                 output = dne.extract(parse(f.read()))
                 
-            assert len(output) == 2
+            assert len(output) == 3
             assert isinstance(output[0], ClassDef)
             assert isinstance(output[1], FunctionDef)
+            assert isinstance(output[2], FunctionDef)
             assert output[0].name == 'Foo'
-            assert output[1].name == 'test_DefinitionNodeExtractor_extract'
+            assert output[1].name == '__init__'
+            assert output[2].name == 'test_DefinitionNodeExtractor_extract'
     """)
 
     _check_result(
@@ -405,112 +405,6 @@ def test_find_fully_qualified_module_name(testdir):
     )
 
 
-def test_find_imports_package_relative(testdir):
-    testdir.mkpydir("foo")
-
-    testdir.makepyfile(foo="from bar import hello")
-    testdir.makepyfile(bar="""
-        def hello():
-            pass
-    """)
-    testdir.makepyfile(setup="""
-        from setuptools import setup
-        setup(
-            name='foo',
-            version='0.1.0',
-            packages=['foo']
-        )
-    """)
-
-    move(os.path.join("foo.py"), os.path.join("foo", "foo.py"))
-    move(os.path.join("bar.py"), os.path.join("foo", "bar.py"))
-
-    pip(['install', '-U', '.'])
-
-    testdir.makepyfile("""
-        import logging
-        import pytest
-        from pytest_smartcollect.helpers import SmartCollector
-        @pytest.fixture
-        def smart_collector():
-            return SmartCollector(
-                r"%s",
-                [],
-                [],
-                1,
-                'master',
-                False,
-                logging.getLogger()
-            )
-        def test_find_imports_package_relative(smart_collector):
-            import os
-            found = smart_collector.find_import(r"%s", r"%s")
-            assert len(found) == 1
-            assert os.path.basename(found[0]) == os.path.basename(r"%s")
-    """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("foo", "bar.py")), os.path.abspath(os.path.join("foo", "foo.py"))))
-
-    _check_result(
-        testdir,
-        [],
-        ['*1 passed in * seconds*'],
-        lambda x: x == 0
-    )
-
-
-def test_find_imports_package_external(testdir):
-    testdir.mkpydir("foo")
-    testdir.mkpydir("baz")
-
-    testdir.makepyfile(zoo="from baz.bar import hello")
-    testdir.makepyfile(bar="""
-            def hello():
-                pass
-        """)
-    testdir.makepyfile(setup="""
-            from setuptools import setup
-            setup(
-                name='test',
-                version='0.1.0',
-                packages=['foo', 'baz']
-            )
-        """)
-
-    move(os.path.join("zoo.py"), os.path.join("foo", "zoo.py"))
-    move(os.path.join("bar.py"), os.path.join("baz", "bar.py"))
-
-    pip(['install', '-U', '.'])
-
-    testdir.makepyfile("""
-            import logging
-            import pytest
-            from pytest_smartcollect.helpers import SmartCollector
-            @pytest.fixture
-            def smart_collector():
-                return SmartCollector(
-                    r"%s",
-                    [],
-                    [],
-                    1,
-                    'master',
-                    False,
-                    logging.getLogger()
-                )
-            def test_find_imports_package_external(smart_collector):
-                import os
-                found = smart_collector.find_import(r"%s", r"%s")
-                assert len(found) == 1
-                assert os.path.basename(found[0]) == os.path.basename(r"%s")
-        """ % (os.path.abspath('.'), os.path.abspath('.'), os.path.abspath(os.path.join("baz", "bar.py")),
-               os.path.abspath(os.path.join("foo", "zoo.py"))))
-
-    _check_result(
-        testdir,
-        [],
-        ['*1 passed in * seconds*'],
-        lambda x: x == 0
-    )
-
-
 def test_filter_ignore_sources(testdir):
     Repo.init(".")
 
@@ -617,21 +511,6 @@ def test_run_smart_collection(testdir):
         ["*2 failed, 1 skipped in * seconds*"],
         lambda x: x != 0
     )
-
-    # test encoding mismatch -- should raise an exception
-    # with open("hello.py", "w", encoding='utf-8-sig') as f:
-    #     f.write("\ufeffdef hello():\n\treturn 45")
-    #
-    # r.index.add(["hello.py"])
-    # r.index.commit("third commit")
-    #
-    # _check_result(
-    #     testdir,
-    #     ["--smart-collect"],
-    #     ["*no tests ran*"],
-    #     lambda x: x != 0,
-    #     cover_sources=False
-    # )
 
     # test deleted paths with references still existing  TODO: move this to a separate test in order to improve coverage
     os.remove("hello.py")

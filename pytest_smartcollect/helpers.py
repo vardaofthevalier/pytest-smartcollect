@@ -13,6 +13,7 @@ ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
 ListOfString = typing.List[str]
 DictOfListOfString = typing.Dict[str, ListOfString]
+DictOfString = typing.Dict[str, str]
 ListOfTestItem = typing.List[pytest.Item]
 
 
@@ -44,10 +45,9 @@ class ObjectNameExtractor(GenericVisitor):
         super(ObjectNameExtractor, self).__init__()
 
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name):
-            self.cache.append(node.func.id)
-
-        self.generic_visit(node)
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                self.cache.append(child.id)
 
 
 class DefinitionNodeExtractor(GenericVisitor):
@@ -59,6 +59,7 @@ class DefinitionNodeExtractor(GenericVisitor):
 
     def visit_ClassDef(self, node):
         self.cache.append(node)
+        self.generic_visit(node)
 
 
 class ImportModuleNameExtractor(GenericVisitor):
@@ -66,14 +67,27 @@ class ImportModuleNameExtractor(GenericVisitor):
         super(ImportModuleNameExtractor, self).__init__()
 
     def visit_Import(self, node):
-        #imp = import_module(node.names[0].name)
         self.cache.append((node.names[0].name, [], 0))
-        self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         names = list(map(lambda x: x.name, node.names))
         self.cache.append((node.module, names, node.level))
-        self.generic_visit(node)
+
+
+class FixtureExtractor(GenericVisitor):
+    def __init__(self):
+        super(FixtureExtractor, self).__init__()
+
+    def visit_FunctionDef(self, node):
+        if len(node.decorator_list) > 0:
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Attribute):
+                    if dec.attr == 'fixture':
+                        self.cache.append(node)
+
+                elif isinstance(dec, ast.Name):
+                    if dec.id == 'fixture':
+                        self.cache.append(node)
 
 
 class SmartCollector(object):
@@ -85,23 +99,24 @@ class SmartCollector(object):
         self.diff_current_head_with_branch = diff_current_head_with_branch
         self.allow_preemptive_failures = allow_preemptive_failures
         self.logger = logger
-        self._encoding_detector = UniversalDetector()
+        self.packages = []
+        self.encoding_detector = UniversalDetector()
 
     def read_file(self, fpath):
-        self._encoding_detector.reset()
+        self.encoding_detector.reset()
 
         f = open(fpath, "rb")
         for line in f.readlines():
-            self._encoding_detector.feed(line)
-            if self._encoding_detector.done:
+            self.encoding_detector.feed(line)
+            if self.encoding_detector.done:
                 break
         f.close()
 
-        if self._encoding_detector.result['encoding'] is None:
+        if self.encoding_detector.result['encoding'] is None:
             enc = 'utf-8'
 
         else:
-            enc = self._encoding_detector.result['encoding'].lower()
+            enc = self.encoding_detector.result['encoding'].lower()
 
         with open(fpath, encoding=enc) as f:
             lines = f.readlines()
@@ -127,6 +142,19 @@ class SmartCollector(object):
 
             else:
                 return self.find_git_repo_root(os.path.dirname(dir))
+
+    @staticmethod
+    def find_packages(dir: str) -> ListOfString:
+        packages = []
+        is_valid_package = lambda x: True if os.path.isdir(x) and '__init__.py' in os.listdir(x) else False
+
+        for root, _, _ in os.walk(dir):
+            abs_root = os.path.abspath(root)
+
+            if is_valid_package(abs_root):
+                packages.append(abs_root)
+
+        return packages
 
     def find_all_files(self, repo_path: str) -> DictOfChangedFile:
         all_files = {}
@@ -293,42 +321,6 @@ class SmartCollector(object):
 
         return changed_members
 
-    def find_import(self, repo_root: str, module_path: str) -> ListOfString:
-        # in this function, we are looking for imports of the module specified by module_path in any python files under repo_root
-        found = []
-        module_name_extractor = ImportModuleNameExtractor()
-        for root, _, files in os.walk(repo_root):
-            for f in files:
-                if os.path.splitext(f)[-1] == ".py":
-                    path = os.path.join(root, f)
-                    contents, _ = self.read_file(path)
-                    package_path = os.path.dirname(os.path.join(root, f))
-                    a = ast.parse(contents)
-                    for (module, _, _) in module_name_extractor.extract(a):
-                        # determine whether or not the module is part of the standard library
-                        if module in sys.builtin_module_names:
-                            continue
-
-                        # determine if the imported module is relative to it's containing package or outside of it
-                        if os.path.isfile(os.path.join(package_path, "%s.py" % module)) or os.path.isdir(os.path.join(package_path, module)):
-                            # in the same package
-                            fully_qualified_module_name = self.find_fully_qualified_module_name(os.path.join(package_path, '%s.py' % module))
-                            i = import_module(fully_qualified_module_name)
-
-                        else:
-                            # in a different package
-                            try:
-                                i = import_module(module)  # this assumes that the module is actually installed...
-
-                            except ImportError:
-                                raise Exception("Module '%s' was imported in file '%s', but the module is not installed in the environment" % (module, os.path.join(root, f)))
-
-                        if "__file__" in vars(i) and os.path.basename(i.__file__) == os.path.basename(module_path):
-                            found.append(f)
-                            break
-
-        return found
-
     @staticmethod
     def find_fully_qualified_module_name(path: str) -> str:
         parts = [os.path.splitext(os.path.basename(path))[0]]
@@ -339,6 +331,13 @@ class SmartCollector(object):
 
         return ".".join(parts)
 
+    @staticmethod
+    def file_in_project(dir, f):
+        if dir not in os.path.commonpath([dir, f]):
+            return False
+
+        return True
+
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
         git_repo_root = self.find_git_repo_root(self.rootdir)
 
@@ -346,7 +345,7 @@ class SmartCollector(object):
             chain.insert(0, "%s::%s" % (path, object_name))
             return True
 
-        if git_repo_root not in os.path.commonpath([git_repo_root, path]):  # if the file is outside of the project, don't bother checking it or any of its dependencies
+        if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
             return False
 
         # otherwise, recursively check the dependencies of this file for other known changes
@@ -360,9 +359,13 @@ class SmartCollector(object):
 
         # find the object of interest in the ast
         obj = None
-        for child in ast.iter_child_nodes(module_ast):
-            if isinstance(child, ast.FunctionDef) or isinstance(child, ast.ClassDef) and child.name == object_name:
+        definition_extractor = DefinitionNodeExtractor()
+        definition_nodes = definition_extractor.extract(module_ast)
+
+        for child in definition_nodes:
+            if child.name == object_name:
                 obj = child
+                break
 
             else:
                 continue
@@ -400,13 +403,28 @@ class SmartCollector(object):
 
             i = import_module(module_name)
 
-            if '__file__' in vars(i):
-                for imported_name in imported_names:
-                    if imported_name in imported_names_and_modules.keys() and i.__file__ not in imported_names_and_modules[imported_name]:
+            for imported_name in imported_names:
+                o = getattr(i, imported_name)
+
+                if hasattr(o, '__module__') and o.__module__ not in sys.builtin_module_names and o.__module__ is not None:
+                    f = import_module(o.__module__).__file__
+
+                else:
+                    f = None
+
+                if imported_name in imported_names_and_modules.keys():
+                    if hasattr(i, '__file__') and i.__file__ not in imported_names_and_modules[imported_name] and self.file_in_project(git_repo_root, i.__file__):
                         imported_names_and_modules[imported_name].append(i.__file__)
 
-                    else:
+                    if f is not None and f not in imported_names_and_modules[imported_name] and self.file_in_project(git_repo_root, f):
+                        imported_names_and_modules[imported_name].append(f)
+
+                else:
+                    if hasattr(i, '__file__') and self.file_in_project(git_repo_root, i.__file__):
                         imported_names_and_modules[imported_name] = [i.__file__]
+
+                    if f is not None and self.file_in_project(git_repo_root, f):
+                        imported_names_and_modules[imported_name].append(f)
 
         # check base classes recursively
         if isinstance(obj, ast.ClassDef):
@@ -428,6 +446,9 @@ class SmartCollector(object):
         used_names = object_name_extractor.extract(obj)
 
         for name in used_names:
+            if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
+                continue
+
             if name in locally_changed:
                 if path in change_map.keys() and name in change_map[path]:
                     return True
@@ -443,139 +464,179 @@ class SmartCollector(object):
                         return True
 
                     else:
-                        return False
+                        continue
 
         return False
 
     def run(self, items):
-        git_repo_root = self.find_git_repo_root(self.rootdir) # recursive function still needs the parameter even though the initial value is a member of self
+        log_records = []
+        git_repo_root = self.find_git_repo_root(self.rootdir)
+        self.packages = self.find_packages(git_repo_root)
 
-        repo = Repo(git_repo_root)
+        for p in self.packages:
+            sys.path.insert(0, p)
 
-        total_commits_on_head = len(list(repo.iter_commits("HEAD")))
+        try:
+            repo = Repo(git_repo_root)
 
-        if total_commits_on_head < 2:
-            added_files = self.find_all_files(git_repo_root)
-            modified_files = {}
-            deleted_files = {}
-            renamed_files = {}
-            changed_filetype_files = {}
+            total_commits_on_head = len(list(repo.iter_commits("HEAD")))
 
-        else:  # inspect the diff
-            added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = self.find_changed_files(repo, git_repo_root)
+            if total_commits_on_head < 2:
+                added_files = self.find_all_files(git_repo_root)
+                modified_files = {}
+                deleted_files = {}
+                renamed_files = {}
+                changed_filetype_files = {}
 
-        # search for a few problems preemptively
-        for deleted in deleted_files.values():
-            # check if any deleted files (or the old path for renamed files) are imported anywhere in the project
-            try:
-                found = self.find_import(self.rootdir, deleted.current_filepath)
+            else:  # inspect the diff
+                added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = self.find_changed_files(repo, git_repo_root)
 
-            except Exception as e:
-                if self.allow_preemptive_failures:
-                    raise e
+            changed_to_py = {}
+            for changed_filetype in changed_filetype_files.values():
+                if os.path.splitext(changed_filetype.current_filepath) == ".py":
+                    changed_to_py[changed_filetype.current_filepath] = changed_filetype
+
+            changed_files = {}
+            changed_files.update(changed_to_py)
+            changed_files.update(modified_files)
+            changed_files.update(renamed_files)
+            changed_files.update(added_files)
+
+            # ignore anything explicitly set in --ignore-source flags
+            changed_files = self.filter_ignore_sources(changed_files)
+
+            # determine all changed members of each of the changed files (if applicable)
+            changed_members_and_modules = {
+                path: self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items()
+            }
+
+            test_count = 0
+            fixture_map = {}
+            ast_map = {}
+
+            for test in items:
+                test_name = test.name.split('[')[0]  # TODO: figure out a better way to handle test names of parameterized tests
+
+                # if the test is new, run it anyway
+                if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
+                    log_records.append(
+                        ('RUN', test.nodeid, "New test")
+                    )
+                    self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
+                    test_count += 1
+                    continue
+
+                # if the test failed in the last run, run it anyway
+                if test.nodeid in self.lastfailed:
+                    log_records.append(
+                        ('RUN', test.nodeid, "Failed on last run")
+                    )
+                    self.logger.info(
+                        "Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
+                    test_count += 1
+                    continue
+
+                # if the test is already skipped, just ignore it
+                if test.get_marker('skip'):
+                    log_records.append(
+                        ('SKIP', test.nodeid, "Found skip marker")
+                    )
+                    self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
+                    continue
+
+                # check dependencies within any defined fixtures
+                if str(test.fspath) in ast_map.keys():
+                    test_file_ast = ast_map[str(test.fspath)]
 
                 else:
-                    self.logger.info("triggered by preemptive failure check: " + str(e))
+                    contents, _ = self.read_file(str(test.fspath))
+                    test_file_ast = ast.parse(contents)
+                    ast_map[str(test.fspath)] = test_file_ast
 
-            else:
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from deleted file '%s' imported in file '%s'\n" % (deleted.current_filepath, f)
+                test_node = None
+                for child in ast.iter_child_nodes(test_file_ast):
+                    if isinstance(child, ast.ClassDef):
+                        for subchild in ast.iter_child_nodes(child):
+                            if isinstance(subchild, ast.FunctionDef) and subchild.name == test_name:
+                                test_node = subchild
+                                break
 
-                    if self.allow_preemptive_failures:
-                        raise Exception(msg)
+                        if test_node is not None:
+                            break
 
-                    self.logger.info(msg)
+                    elif isinstance(child, ast.FunctionDef) and child.name == test_name:
+                        test_node = child
+                        break
 
-        for renamed in renamed_files.values():
-            # check if any renamed files are imported by their old name
-            try:
-                found = self.find_import(self.rootdir, renamed.old_filepath)
+                assert test_node is not None
 
-            except Exception as e:
-                if self.allow_preemptive_failures:
-                    raise e
+                if str(test.fspath) not in fixture_map.keys():
+                    fixture_extractor = FixtureExtractor()
+                    fixtures = fixture_extractor.extract(test_file_ast)
+
+                    fixture_map[str(test.fspath)] = fixtures
+
+                found_changed_fixture = False
+                for fixture in fixture_map[str(test.fspath)]:
+                    for arg in test_node.args.args:
+                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, []):
+                            log_records.append(
+                                ('RUN', test.nodeid, "Uses changed fixture")
+                            )
+                            self.logger.info("Test '%s' will run because it uses a changed fixture (%s)" % (
+                            test.nodeid, fixture.name))
+                            test_count += 1
+                            found_changed_fixture = True
+                            break
+
+                    if found_changed_fixture:
+                        break
+
+                if found_changed_fixture:
+                    continue
+
+                # otherwise, check the dependency chain from inside the test function
+                chain = []
+                if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, chain):
+                    log_records.append(
+                        ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
+                    )
+                    self.logger.info(
+                        "Test '%s' will run because one of it's dependencies changed (%s)" % (
+                        test.nodeid, ' -> '.join(chain)))
+                    test_count += 1
+                    continue
 
                 else:
-                    self.logger.info("triggered by preemptive failure check: " + str(e))
+                    log_records.append(
+                        ('SKIP', test.nodeid, "Unchanged")
+                    )
+                    self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
+                    skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
+                    test.add_marker(skip)
 
-            else:
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from renamed file ('%s' -> '%s') imported incorrectly using it's old name in file '%s'\n" % (
-                            renamed.old_filepath, renamed.current_filepath, f)
+            # TODO: add option to write to csv
+            import csv
+            with open("results.csv", "w") as csvfile:
+                csvwriter = csv.writer(csvfile)
+                for row in log_records:
+                    csvwriter.writerow(list(row))
 
-                    if self.allow_preemptive_failures:
-                        raise Exception(msg)
+            self.logger.warning("Total tests selected to run: " + str(test_count))
+            self._revert_syspath()
 
-                    self.logger.info(msg)
+        except Exception as e:
+            self._handle_exception(str(e))
 
-        changed_to_py = {}
-        for changed_filetype in changed_filetype_files.values():
-            # check if any files that changed type from python to something else are still being imported somewhere else in the project
-            if os.path.splitext(changed_filetype.old_filepath)[-1] == ".py":
-                found = self.find_import(self.rootdir, changed_filetype.old_filepath)
-                if len(found) > 0:
-                    msg = ""
-                    for f in found:
-                        msg += "Module from renamed file ('%s' -> '%s') no longer exists but is imported in file '%s'\n)" % (
-                            changed_filetype.old_filepath, changed_filetype.current_filepath, f)
+    def _handle_exception(self, msg):
+        self._revert_syspath()
+        raise Exception(msg)
 
-                    if self.allow_preemptive_failures:
-                        raise Exception(msg)
+    def _revert_syspath(self):
+        for _ in range(0, len(self.packages)):
+            sys.path.pop(0)
 
-                    self.logger.info(msg)
 
-            elif os.path.splitext(changed_filetype.current_filepath) == ".py":
-                changed_to_py[changed_filetype.current_filepath] = changed_filetype
-
-        changed_files = {}
-        changed_files.update(changed_to_py)
-        changed_files.update(modified_files)
-        changed_files.update(renamed_files)
-        changed_files.update(added_files)
-
-        # ignore anything explicitly set in --ignore-source flags
-        changed_files = self.filter_ignore_sources(changed_files)
-
-        # determine all changed members of each of the changed files (if applicable)
-        changed_members_and_modules = {path: self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items() }
-
-        test_count = 0
-        for test in items:
-            # if the test is new, run it anyway
-            if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
-                self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
-                test_count += 1
-                continue
-
-            # if the test failed in the last run, run it anyway
-            if test.nodeid in self.lastfailed:
-                self.logger.info("Test '%s' failed on the last run, so will be run regardless of changes" % test.nodeid)
-                test_count += 1
-                continue
-
-            # if the test is already skipped, just ignore it
-            if test.get_marker('skip'):
-                self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
-                continue
-
-            # otherwise, check the dependency chain
-            chain = []
-            if self.dependencies_changed(str(test.fspath), test.name.split('[')[0], changed_members_and_modules, chain):  # TODO: figure out a better way to handle test names of parameterized tests
-                self.logger.info(
-                    "Test '%s' will run because one of it's dependencies changed (%s)" % (test.nodeid, ' -> '.join(chain)))
-                test_count += 1
-                continue
-
-            else:
-                self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
-                skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
-                test.add_marker(skip)
-
-        self.logger.info("Total tests selected to run: " + str(test_count))
 
 
 
