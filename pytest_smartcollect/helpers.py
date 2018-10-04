@@ -40,6 +40,25 @@ class GenericVisitor(ast.NodeVisitor):
         return self.cache
 
 
+class BaseClassNameExtractor(GenericVisitor):
+    def __init__(self):
+        super(BaseClassNameExtractor, self).__init__()
+
+    def visit_ClassDef(self, node):
+        for base in node.bases:
+            self.generic_visit(base)
+
+    def visit_Name(self, node):
+        if ast.Attribute in [type(x) for x in ast.iter_child_nodes(node)]:
+            self.generic_visit(node)
+
+        else:
+            self.cache.append(node.id)
+
+    def visit_Attribute(self, node):
+        self.cache.append(node.attr)
+
+
 class ObjectNameExtractor(GenericVisitor):
     def __init__(self):
         super(ObjectNameExtractor, self).__init__()
@@ -427,17 +446,18 @@ class SmartCollector(object):
                         imported_names_and_modules[imported_name].append(f)
 
         # check base classes recursively
+        base_class_name_extractor = BaseClassNameExtractor()
         if isinstance(obj, ast.ClassDef):
-            for base in obj.bases:
-                if base.id in imported_names_and_modules.keys():
-                    base_class_module_paths = imported_names_and_modules[base.id]
+            for base_name in base_class_name_extractor.extract(obj):
+                if base_name in imported_names_and_modules.keys():
+                    base_class_module_paths = imported_names_and_modules[base_name]
                     for path in base_class_module_paths:
-                        if self.dependencies_changed(path, base.id, change_map, chain):
+                        if self.dependencies_changed(path, base_name, change_map, chain):
                             if path in change_map.keys():
-                                change_map[path].append(base.id)
+                                change_map[path].append(base_name)
 
                             else:
-                                change_map[path] = [base.id]
+                                change_map[path] = [base_name]
 
                             return True
 
