@@ -13,7 +13,7 @@ def read(fname):
 
 setup(
     name='pytest-smartcollect',
-    version='0.1.3',
+    version='0.1.4',
     author='Abigail Hahn',
     author_email='abigail.n.hahn@gmail.com',
     maintainer='Abigail Hahn',
