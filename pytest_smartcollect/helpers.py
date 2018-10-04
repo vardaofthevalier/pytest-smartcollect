@@ -179,8 +179,8 @@ class SmartCollector(object):
         all_files = {}
         for root, _, files in os.walk(repo_path):
             for f in files:
-                if os.path.splitext(f)[-1] == ".py":
-                    fpath = os.path.join(root, f)
+                fpath = os.path.join(root, f)
+                if os.path.splitext(f)[-1] == ".py" and not self.should_ignore_source_file(fpath):
                     contents, linecount = self.read_file(fpath)
                     all_files[fpath] = ChangedFile(
                         change_type='A',
@@ -292,18 +292,13 @@ class SmartCollector(object):
 
         return changed_files['A'], changed_files['M'], changed_files['D'], changed_files['R'], changed_files['T']
 
-    def filter_ignore_sources(self, changed_files: DictOfChangedFile) -> DictOfChangedFile:
-        if len(self.ignore_source) > 0:
-            filtered_changed_files = {}
-            for k, v in changed_files.items():
-                for y in self.ignore_source:
-                    if os.path.commonpath([v.current_filepath, y]) != y:
-                        filtered_changed_files[k] = v
+    def should_ignore_source_file(self, source_file: str) -> bool:
+        if self.ignore_source is not None:
+            for ign in self.ignore_source:
+                if os.path.commonpath([source_file, ign]) == ign:
+                    return True
 
-            return filtered_changed_files
-
-        else:
-            return changed_files
+        return False
 
     def find_changed_members(self, changed_module: ChangedFile, repo_path: str) -> ListOfString:
         # find all changed members of changed_module
@@ -501,7 +496,7 @@ class SmartCollector(object):
 
             total_commits_on_head = len(list(repo.iter_commits("HEAD")))
 
-            if total_commits_on_head < 2:
+            if (self.diff_current_head_with_branch == repo.active_branch or self.commit_range == 0) and total_commits_on_head < 2:
                 added_files = self.find_all_files(git_repo_root)
                 modified_files = {}
                 deleted_files = {}
@@ -523,7 +518,7 @@ class SmartCollector(object):
             changed_files.update(added_files)
 
             # ignore anything explicitly set in --ignore-source flags
-            changed_files = self.filter_ignore_sources(changed_files)
+            changed_files = {k: v for k, v in changed_files.items() if not self.should_ignore_source_file(k)}
 
             # determine all changed members of each of the changed files (if applicable)
             changed_members_and_modules = {
