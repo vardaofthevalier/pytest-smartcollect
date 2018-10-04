@@ -496,7 +496,7 @@ class SmartCollector(object):
 
             total_commits_on_head = len(list(repo.iter_commits("HEAD")))
 
-            if (self.diff_current_head_with_branch == repo.active_branch or self.commit_range == 0) and total_commits_on_head < 2:
+            if self.diff_current_head_with_branch == repo.active_branch.name and total_commits_on_head < 2:
                 added_files = self.find_all_files(git_repo_root)
                 modified_files = {}
                 deleted_files = {}
