@@ -17,6 +17,18 @@ DictOfString = typing.Dict[str, str]
 ListOfTestItem = typing.List[pytest.Item]
 
 
+class ModuleMember(object):
+    def __init__(self, module_path, name, depends_on=None, changed=False, color="white"):
+        self.module_path = module_path
+        self.name = name
+        self.depends_on = depends_on
+        self.changed = changed
+        self.color = color
+
+    def reset_color(self):
+        self.color = "white"
+
+
 class ChangedFile(object):
     def __init__(self, change_type: str, current_filepath: str, old_filepath: StrOrNone=None, changed_lines: ListOrNone=None):
         self.change_type = change_type
@@ -352,15 +364,34 @@ class SmartCollector(object):
 
         return True
 
-    def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, chain: ListOfString) -> bool:
+    @staticmethod
+    def add_key_and_value_to_linked_list(module_path, member, m):
+        if module_path not in m.keys():
+            m[module_path] = [member]
+
+        else:
+            if member not in m[module_path]:
+                m[module_path].append(member)
+
+    def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, unchanged_map: DictOfListOfString, visited_map: DictOfListOfString, chain: ListOfString) -> bool:
         git_repo_root = self.find_git_repo_root(self.rootdir)
 
         if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
-            chain.insert(0, "%s::%s" % (path, object_name))
+            chain.append("%s::%s" % (path, object_name))
             return True
+
+        if path in unchanged_map.keys() and object_name in unchanged_map[path]:
+            return False
 
         if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
             return False
+
+        # if this module and object have been visited before but aren't yet marked changed or unchanged, then we have detected a dependency cycle
+        if path in visited_map.keys() and object_name in visited_map[path]:
+            raise Exception("Dependency cycle detected: " + ' -> '.join(chain))
+
+        else:
+            self.add_key_and_value_to_linked_list(path, object_name, visited_map)
 
         # otherwise, recursively check the dependencies of this file for other known changes
         contents, _ = self.read_file(path)
@@ -385,6 +416,7 @@ class SmartCollector(object):
                 continue
 
         if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
+            self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
             return False
 
         # extract imports
@@ -426,19 +458,11 @@ class SmartCollector(object):
                 else:
                     f = None
 
-                if imported_name in imported_names_and_modules.keys():
-                    if hasattr(i, '__file__') and i.__file__ not in imported_names_and_modules[imported_name] and self.file_in_project(git_repo_root, i.__file__):
-                        imported_names_and_modules[imported_name].append(i.__file__)
+                if hasattr(i, '__file__') and self.file_in_project(git_repo_root, i.__file__):
+                    self.add_key_and_value_to_linked_list(imported_name, i.__file__, imported_names_and_modules)
 
-                    if f is not None and f not in imported_names_and_modules[imported_name] and self.file_in_project(git_repo_root, f):
-                        imported_names_and_modules[imported_name].append(f)
-
-                else:
-                    if hasattr(i, '__file__') and self.file_in_project(git_repo_root, i.__file__):
-                        imported_names_and_modules[imported_name] = [i.__file__]
-
-                    if f is not None and self.file_in_project(git_repo_root, f):
-                        imported_names_and_modules[imported_name].append(f)
+                if f is not None and self.file_in_project(git_repo_root, f):
+                    self.add_key_and_value_to_linked_list(imported_name, f, imported_names_and_modules)
 
         # check base classes recursively
         base_class_name_extractor = BaseClassNameExtractor()
@@ -447,18 +471,13 @@ class SmartCollector(object):
                 if base_name in imported_names_and_modules.keys():
                     base_class_module_paths = imported_names_and_modules[base_name]
                     for path in base_class_module_paths:
-                        if self.dependencies_changed(path, base_name, change_map, chain):
-                            if path in change_map.keys():
-                                change_map[path].append(base_name)
-
-                            else:
-                                change_map[path] = [base_name]
-
+                        if self.dependencies_changed(path, base_name, change_map, unchanged_map, visited_map, chain):
+                            self.add_key_and_value_to_linked_list(path, base_name, change_map)
                             return True
 
         # extract call objects from obj
         object_name_extractor = ObjectNameExtractor()
-        used_names = object_name_extractor.extract(obj)
+        used_names = set(object_name_extractor.extract(obj))
 
         for name in used_names:
             if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
@@ -470,17 +489,11 @@ class SmartCollector(object):
 
             if name in imported_names_and_modules.keys():
                 for module_path in imported_names_and_modules[name]:
-                    if self.dependencies_changed(module_path, name, change_map, chain):
-                        if module_path in change_map.keys():
-                            change_map[module_path].append(name)
-                        else:
-                            change_map[module_path] = [name]
-
+                    if self.dependencies_changed(module_path, name, change_map, unchanged_map, visited_map, chain):
+                        self.add_key_and_value_to_linked_list(module_path, name, change_map)
                         return True
 
-                    else:
-                        continue
-
+        self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
         return False
 
     def run(self, items):
@@ -528,6 +541,7 @@ class SmartCollector(object):
             test_count = 0
             fixture_map = {}
             ast_map = {}
+            unchanged_members_and_modules = {}
 
             for test in items:
                 test_name = test.name.split('[')[0]  # TODO: figure out a better way to handle test names of parameterized tests
@@ -594,7 +608,7 @@ class SmartCollector(object):
                 found_changed_fixture = False
                 for fixture in fixture_map[str(test.fspath)]:
                     for arg in test_node.args.args:
-                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, []):
+                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, unchanged_members_and_modules, {}, []):
                             log_records.append(
                                 ('RUN', test.nodeid, "Uses changed fixture")
                             )
@@ -612,7 +626,7 @@ class SmartCollector(object):
 
                 # otherwise, check the dependency chain from inside the test function
                 chain = []
-                if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, chain):
+                if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, unchanged_members_and_modules, {}, chain):
                     log_records.append(
                         ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
                     )
