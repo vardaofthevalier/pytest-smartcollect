@@ -8,6 +8,7 @@ import logging
 from git import Repo
 from importlib import import_module
 from chardet import UniversalDetector
+from enum import Enum
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
@@ -17,17 +18,24 @@ DictOfString = typing.Dict[str, str]
 ListOfTestItem = typing.List[pytest.Item]
 
 
-class ModuleMember(object):
-    def __init__(self, module_path, name, depends_on=None, changed=False, color="white"):
+class ModuleGraphNodeColor(Enum):
+    WHITE = 1
+    GREY = 2
+    BLACK = 3
+
+
+class ModuleGraphNode(object):
+    def __init__(self, module_path: str, name:str, is_test_function:bool=False, dependencies: typing.List['ModuleGraphNode']=None, changed: bool=False, color: ModuleGraphNodeColor=ModuleGraphNodeColor.WHITE):
         self.module_path = module_path
         self.name = name
-        self.depends_on = depends_on
+        self.dependencies = dependencies
         self.changed = changed
         self.color = color
+        self.is_test_function = is_test_function
 
     def reset_color(self):
-        self.color = "white"
-
+        self.color = 'W'
+        
 
 class ChangedFile(object):
     def __init__(self, change_type: str, current_filepath: str, old_filepath: StrOrNone=None, changed_lines: ListOrNone=None):
@@ -69,6 +77,15 @@ class BaseClassNameExtractor(GenericVisitor):
 
     def visit_Attribute(self, node):
         self.cache.append(node.attr)
+
+
+class AssignmentNodeExtractor(GenericVisitor):
+    def __init__(self):
+        super(AssignmentNodeExtractor, self).__init__()
+
+    def visit_Assign(self, node):
+        for t in node.targets:
+            self.cache.append(t)
 
 
 class ObjectNameExtractor(GenericVisitor):
@@ -124,6 +141,7 @@ class FixtureExtractor(GenericVisitor):
 class SmartCollector(object):
     def __init__(self, rootdir: str, lastfailed: ListOfString, ignore_source: ListOfString, commit_range: int, diff_current_head_with_branch: str, allow_preemptive_failures: bool, logger: logging.Logger):
         self.rootdir = rootdir
+        self.git_repo_root = None
         self.lastfailed = lastfailed
         self.ignore_source = ignore_source
         self.commit_range = commit_range
@@ -132,6 +150,10 @@ class SmartCollector(object):
         self.logger = logger
         self.packages = []
         self.encoding_detector = UniversalDetector()
+
+        self.fixture_map = {}
+        self.changed_members_and_modules = {}
+        self.project_nodes = {}
 
     def read_file(self, fpath):
         self.encoding_detector.reset()
@@ -373,51 +395,192 @@ class SmartCollector(object):
             if member not in m[module_path]:
                 m[module_path].append(member)
 
-    def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, unchanged_map: DictOfListOfString, visited_map: DictOfListOfString, chain: ListOfString) -> bool:
-        git_repo_root = self.find_git_repo_root(self.rootdir)
+    # def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, unchanged_map: DictOfListOfString, visited_map: DictOfListOfString, chain: ListOfString) -> bool:
+    #     git_repo_root = self.find_git_repo_root(self.rootdir)
+    # 
+    #     if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
+    #         chain.append("%s::%s" % (path, object_name))
+    #         return True
+    # 
+    #     if path in unchanged_map.keys() and object_name in unchanged_map[path]:
+    #         return False
+    # 
+    #     if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
+    #         return False
+    # 
+    #     # if this module and object have been visited before but aren't yet marked changed or unchanged, then we have detected a dependency cycle
+    #     if path in visited_map.keys() and object_name in visited_map[path]:
+    #         raise Exception("Dependency cycle detected: " + ' -> '.join(chain))
+    # 
+    #     else:
+    #         self.add_key_and_value_to_linked_list(path, object_name, visited_map)
+    # 
+    #     # otherwise, recursively check the dependencies of this file for other known changes
+    #     contents, _ = self.read_file(path)
+    #     module_ast = ast.parse(contents)
+    # 
+    #     # find locally changed members
+    #     locally_changed = []
+    #     if path in change_map.keys():
+    #         locally_changed = change_map[path]
+    # 
+    #     # find the object of interest in the ast
+    #     obj = None
+    #     definition_extractor = DefinitionNodeExtractor()
+    #     definition_nodes = definition_extractor.extract(module_ast)
+    # 
+    #     for child in definition_nodes:
+    #         if child.name == object_name:
+    #             obj = child
+    #             break
+    # 
+    #         else:
+    #             continue
+    # 
+    #     if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
+    #         self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
+    #         return False
+    # 
+    #     # extract imports
+    #     imported_names_and_modules = {}
+    #     imne = ImportModuleNameExtractor()
+    #     extracted_imports = imne.extract(module_ast)
+    # 
+    #     for (module_name, imported_names, import_level) in extracted_imports:
+    #         if module_name in sys.builtin_module_names: # we can safely assume that builtin module changes aren't relevant
+    #             continue
+    # 
+    #         if module_name is None:  # here we need to find the fully qualified module name for a package relative import
+    #             assert import_level > 0
+    #             module_name = self.find_fully_qualified_module_name(os.path.dirname(path))
+    # 
+    #         else:
+    #             if import_level > 0: # another package relative import situation
+    #                 module_name = [module_name]
+    #                 src_path = path
+    #                 while import_level > 0:
+    #                     src_path = os.path.dirname(src_path)
+    #                     module_name.insert(0, os.path.basename(src_path))
+    #                     import_level -= 1
+    # 
+    #                 module_name = '.'.join(module_name)
+    # 
+    #         if len(imported_names) == 0 or '*' in imported_names:
+    #             imp = import_module(module_name)
+    #             imported_names = dir(imp)
+    # 
+    #         i = import_module(module_name)
+    # 
+    #         for imported_name in imported_names:
+    #             o = getattr(i, imported_name)
+    # 
+    #             if hasattr(o, '__module__') and o.__module__ not in sys.builtin_module_names and o.__module__ is not None:
+    #                 f = import_module(o.__module__).__file__
+    # 
+    #             else:
+    #                 f = None
+    # 
+    #             if hasattr(i, '__file__') and self.file_in_project(git_repo_root, i.__file__):
+    #                 self.add_key_and_value_to_linked_list(imported_name, i.__file__, imported_names_and_modules)
+    # 
+    #             if f is not None and self.file_in_project(git_repo_root, f):
+    #                 self.add_key_and_value_to_linked_list(imported_name, f, imported_names_and_modules)
+    # 
+    #     # check base classes recursively
+    #     base_class_name_extractor = BaseClassNameExtractor()
+    #     if isinstance(obj, ast.ClassDef):
+    #         for base_name in base_class_name_extractor.extract(obj):
+    #             if base_name in imported_names_and_modules.keys():
+    #                 base_class_module_paths = imported_names_and_modules[base_name]
+    #                 for path in base_class_module_paths:
+    #                     if self.dependencies_changed(path, base_name, change_map, unchanged_map, visited_map, chain):
+    #                         self.add_key_and_value_to_linked_list(path, base_name, change_map)
+    #                         return True
+    # 
+    #     # extract call objects from obj
+    #     object_name_extractor = ObjectNameExtractor()
+    #     used_names = set(object_name_extractor.extract(obj))
+    # 
+    #     for name in used_names:
+    #         if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
+    #             continue
+    # 
+    #         if name in locally_changed:
+    #             if path in change_map.keys() and name in change_map[path]:
+    #                 return True
+    # 
+    #         if name in imported_names_and_modules.keys():
+    #             for module_path in imported_names_and_modules[name]:
+    #                 if self.dependencies_changed(module_path, name, change_map, unchanged_map, visited_map, chain):
+    #                     self.add_key_and_value_to_linked_list(module_path, name, change_map)
+    #                     return True
+    # 
+    #     self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
+    #     return False
 
-        if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
-            chain.append("%s::%s" % (path, object_name))
+    def is_changed(self, module, name):
+        if module in self.changed_members_and_modules.keys() and name in self.changed_members_and_modules[module]:
             return True
 
-        if path in unchanged_map.keys() and object_name in unchanged_map[path]:
-            return False
+        return False
 
-        if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
-            return False
+    def find_dependencies(self, module: str, member: str, is_test_function: bool=False) -> typing.List[ModuleGraphNode]:
+        if not self.file_in_project(self.git_repo_root, module) or self.should_ignore_source_file(module):
+            return []
 
-        # if this module and object have been visited before but aren't yet marked changed or unchanged, then we have detected a dependency cycle
-        if path in visited_map.keys() and object_name in visited_map[path]:
-            raise Exception("Dependency cycle detected: " + ' -> '.join(chain))
-
-        else:
-            self.add_key_and_value_to_linked_list(path, object_name, visited_map)
-
-        # otherwise, recursively check the dependencies of this file for other known changes
-        contents, _ = self.read_file(path)
+        dependencies = []
+        contents, _ = self.read_file(module)
         module_ast = ast.parse(contents)
 
-        # find locally changed members
-        locally_changed = []
-        if path in change_map.keys():
-            locally_changed = change_map[path]
-
-        # find the object of interest in the ast
+        # find the member of interest in the ast
         obj = None
         definition_extractor = DefinitionNodeExtractor()
         definition_nodes = definition_extractor.extract(module_ast)
 
-        for child in definition_nodes:
-            if child.name == object_name:
+        assignment_extractor = AssignmentNodeExtractor()
+        assignment_targets = assignment_extractor.extract(module_ast)
+        local_objects = []
+        for a in assignment_targets:
+            if isinstance(a, ast.Name):
+                local_objects.append(a)
+
+        local_objects.extend(definition_nodes)
+
+        for child in local_objects:
+            if isinstance(child, ast.FunctionDef) or isinstance(child, ast.AsyncFunctionDef) or isinstance(child, ast.ClassDef):
+                child_name = child.name
+
+            elif isinstance(child, ast.Name):
+                child_name = child.id
+
+            else:
+                raise Exception("Local object name unknown")
+
+            if child_name == member:
                 obj = child
                 break
 
             else:
                 continue
 
-        if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
-            self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
-            return False
+        if obj is None:
+            return []
+
+        if is_test_function:
+            # check dependencies within any defined fixtures
+            test_args = set(obj.args.args)
+            if module not in self.fixture_map.keys():
+                fixture_extractor = FixtureExtractor()
+                fixtures = fixture_extractor.extract(module_ast)
+                self.fixture_map[module] = set([x.name for x in fixtures])
+
+            for test_module, fixture_list in self.fixture_map.items():
+                used_fixtures = fixture_list.intersection(test_args)
+                for fixture in used_fixtures:
+                    if (test_module, fixture) not in self.project_nodes.keys():
+                        self.project_nodes[(test_module, fixture)] = ModuleGraphNode(test_module, fixture, changed=self.is_changed(test_module, fixture))
+
+                    dependencies.append(self.project_nodes[(test_module, fixture)])
 
         # extract imports
         imported_names_and_modules = {}
@@ -425,17 +588,17 @@ class SmartCollector(object):
         extracted_imports = imne.extract(module_ast)
 
         for (module_name, imported_names, import_level) in extracted_imports:
-            if module_name in sys.builtin_module_names: # we can safely assume that builtin module changes aren't relevant
+            if module_name in sys.builtin_module_names:  # we can safely assume that builtin module changes aren't relevant
                 continue
 
             if module_name is None:  # here we need to find the fully qualified module name for a package relative import
                 assert import_level > 0
-                module_name = self.find_fully_qualified_module_name(os.path.dirname(path))
+                module_name = self.find_fully_qualified_module_name(os.path.dirname(module))
 
             else:
-                if import_level > 0: # another package relative import situation
+                if import_level > 0:  # another package relative import situation
                     module_name = [module_name]
-                    src_path = path
+                    src_path = module
                     while import_level > 0:
                         src_path = os.path.dirname(src_path)
                         module_name.insert(0, os.path.basename(src_path))
@@ -452,16 +615,17 @@ class SmartCollector(object):
             for imported_name in imported_names:
                 o = getattr(i, imported_name)
 
-                if hasattr(o, '__module__') and o.__module__ not in sys.builtin_module_names and o.__module__ is not None:
+                if hasattr(o,
+                           '__module__') and o.__module__ not in sys.builtin_module_names and o.__module__ is not None:
                     f = import_module(o.__module__).__file__
 
                 else:
                     f = None
 
-                if hasattr(i, '__file__') and self.file_in_project(git_repo_root, i.__file__):
+                if hasattr(i, '__file__') and self.file_in_project(self.git_repo_root, i.__file__):
                     self.add_key_and_value_to_linked_list(imported_name, i.__file__, imported_names_and_modules)
 
-                if f is not None and self.file_in_project(git_repo_root, f):
+                if f is not None and self.file_in_project(self.git_repo_root, f):
                     self.add_key_and_value_to_linked_list(imported_name, f, imported_names_and_modules)
 
         # check base classes recursively
@@ -471,53 +635,66 @@ class SmartCollector(object):
                 if base_name in imported_names_and_modules.keys():
                     base_class_module_paths = imported_names_and_modules[base_name]
                     for path in base_class_module_paths:
-                        if self.dependencies_changed(path, base_name, change_map, unchanged_map, visited_map, chain):
-                            self.add_key_and_value_to_linked_list(path, base_name, change_map)
-                            return True
+                        if (path, base_name) not in self.project_nodes.keys():
+                            self.project_nodes[(path, base_name)] = ModuleGraphNode(path, base_name, changed=self.is_changed(path, base_name))
+
+                        dependencies.append(self.project_nodes[(path, base_name)])
+
+        # find all locally defined objects
+        member_extractor = ObjectNameExtractor()
 
         # extract call objects from obj
-        object_name_extractor = ObjectNameExtractor()
-        used_names = set(object_name_extractor.extract(obj))
+        used_names = set(member_extractor.extract(obj))
+        local_names = []
+
+        for local_obj in local_objects:
+            if isinstance(local_obj, ast.FunctionDef) or isinstance(local_obj, ast.AsyncFunctionDef) or isinstance(local_obj, ast.ClassDef):
+                local_names.append(local_obj.name)
+
+            elif isinstance(local_obj, ast.Name):
+                local_names.append(local_obj.id)
 
         for name in used_names:
-            if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
+            if name == member:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
                 continue
 
-            if name in locally_changed:
-                if path in change_map.keys() and name in change_map[path]:
-                    return True
+            elif name in local_names:
+                if (module, name) not in self.project_nodes.keys():
+                    self.project_nodes[(module, name)] = ModuleGraphNode(module, name, changed=self.is_changed(module, name))
 
-            if name in imported_names_and_modules.keys():
+                dependencies.append(self.project_nodes[(module, name)])
+
+            elif name in imported_names_and_modules.keys():
                 for module_path in imported_names_and_modules[name]:
-                    if self.dependencies_changed(module_path, name, change_map, unchanged_map, visited_map, chain):
-                        self.add_key_and_value_to_linked_list(module_path, name, change_map)
-                        return True
+                    if (module_path, name) not in self.project_nodes.keys():
+                        self.project_nodes[(module_path, name)] = ModuleGraphNode(module_path, name, changed=self.is_changed(module_path, name))
 
-        self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
-        return False
+                    dependencies.append(self.project_nodes[(module_path, name)])
+
+        return dependencies
 
     def run(self, items):
         log_records = []
-        git_repo_root = self.find_git_repo_root(self.rootdir)
-        self.packages = self.find_packages(git_repo_root)
+        self.git_repo_root = self.find_git_repo_root(self.rootdir)
+        self.packages = self.find_packages(self.git_repo_root)
 
         for p in self.packages:
             sys.path.insert(0, p)
 
         try:
-            repo = Repo(git_repo_root)
+            repo = Repo(self.git_repo_root)
 
             total_commits_on_head = len(list(repo.iter_commits("HEAD")))
 
             if self.diff_current_head_with_branch == repo.active_branch.name and total_commits_on_head < 2:
-                added_files = self.find_all_files(git_repo_root)
+                added_files = self.find_all_files(self.git_repo_root)
                 modified_files = {}
                 deleted_files = {}
                 renamed_files = {}
                 changed_filetype_files = {}
 
             else:  # inspect the diff
-                added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = self.find_changed_files(repo, git_repo_root)
+                added_files, modified_files, deleted_files, renamed_files, changed_filetype_files = self.find_changed_files(repo, self.git_repo_root)
 
             changed_to_py = {}
             for changed_filetype in changed_filetype_files.values():
@@ -534,26 +711,13 @@ class SmartCollector(object):
             changed_files = {k: v for k, v in changed_files.items() if not self.should_ignore_source_file(k)}
 
             # determine all changed members of each of the changed files (if applicable)
-            changed_members_and_modules = {
-                path: self.find_changed_members(ch, git_repo_root) for path, ch in changed_files.items()
+            self.changed_members_and_modules = {
+                path: self.find_changed_members(ch, self.git_repo_root) for path, ch in changed_files.items()
             }
 
             test_count = 0
-            fixture_map = {}
-            ast_map = {}
-            unchanged_members_and_modules = {}
-
             for test in items:
-                test_name = test.name.split('[')[0]  # TODO: figure out a better way to handle test names of parameterized tests
-
-                # if the test is new, run it anyway
-                if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
-                    log_records.append(
-                        ('RUN', test.nodeid, "New test")
-                    )
-                    self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
-                    test_count += 1
-                    continue
+                test_name = test.name.split('[')[0]
 
                 # if the test failed in the last run, run it anyway
                 if test.nodeid in self.lastfailed:
@@ -573,76 +737,68 @@ class SmartCollector(object):
                     self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
                     continue
 
-                # check dependencies within any defined fixtures
-                if str(test.fspath) in ast_map.keys():
-                    test_file_ast = ast_map[str(test.fspath)]
-
-                else:
-                    contents, _ = self.read_file(str(test.fspath))
-                    test_file_ast = ast.parse(contents)
-                    ast_map[str(test.fspath)] = test_file_ast
-
-                test_node = None
-                for child in ast.iter_child_nodes(test_file_ast):
-                    if isinstance(child, ast.ClassDef):
-                        for subchild in ast.iter_child_nodes(child):
-                            if isinstance(subchild, ast.FunctionDef) and subchild.name == test_name:
-                                test_node = subchild
-                                break
-
-                        if test_node is not None:
-                            break
-
-                    elif isinstance(child, ast.FunctionDef) and child.name == test_name:
-                        test_node = child
-                        break
-
-                assert test_node is not None
-
-                if str(test.fspath) not in fixture_map.keys():
-                    fixture_extractor = FixtureExtractor()
-                    fixtures = fixture_extractor.extract(test_file_ast)
-
-                    fixture_map[str(test.fspath)] = fixtures
-
-                found_changed_fixture = False
-                for fixture in fixture_map[str(test.fspath)]:
-                    for arg in test_node.args.args:
-                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, unchanged_members_and_modules, {}, []):
-                            log_records.append(
-                                ('RUN', test.nodeid, "Uses changed fixture")
-                            )
-                            self.logger.info("Test '%s' will run because it uses a changed fixture (%s)" % (
-                            test.nodeid, fixture.name))
-                            test_count += 1
-                            found_changed_fixture = True
-                            break
-
-                    if found_changed_fixture:
-                        break
-
-                if found_changed_fixture:
-                    continue
-
                 # otherwise, check the dependency chain from inside the test function
-                chain = []
-                if self.dependencies_changed(str(test.fspath), test_name, changed_members_and_modules, unchanged_members_and_modules, {}, chain):
-                    log_records.append(
-                        ('RUN', test.nodeid, "Dependency changed: " + ' -> '.join(chain))
-                    )
-                    self.logger.info(
-                        "Test '%s' will run because one of it's dependencies changed (%s)" % (
-                        test.nodeid, ' -> '.join(chain)))
-                    test_count += 1
-                    continue
+                module_spec = (str(test.fspath), test_name)
+                t = ModuleGraphNode(*module_spec, changed=self.is_changed(*module_spec))
+                t.dependencies = self.find_dependencies(*module_spec, is_test_function=True)
+                self.project_nodes[module_spec] = t
 
-                else:
+                # construct the entire graph
+                queue = []
+                queue.append(t)
+                while len(queue) > 0:
+                    current = queue.pop(0)
+                    if current.dependencies is None:
+                        current.dependencies = self.find_dependencies(current.module_path, current.name)
+
+                    queue.extend(current.dependencies)
+
+                # use dfs for guarding against import cycles in the project
+                stack = []
+                stack.insert(0, t)
+                found_changed_dep = False
+                while len(stack) > 0:
+                    current = stack.pop(0)
+                    if current.changed:
+                        found_changed_dep = True
+                        stack.insert(0, current)
+                        break
+
+                    if current.color == ModuleGraphNodeColor.WHITE:
+                        current.color = ModuleGraphNodeColor.GREY
+                        stack.insert(0, current)
+                        for dep in current.dependencies:
+                            stack.insert(0, dep)
+
+                    elif current.color == ModuleGraphNodeColor.GREY:
+                        for d in current.dependencies:
+                            if d.color != ModuleGraphNodeColor.BLACK:
+                                stack.insert(0, current)
+                                dependency_chain = ' -> '.join(
+                                    list(reversed(list(map(lambda x: "%s::%s" % (x.module_path, x.name), stack)))))
+                                raise Exception("Import cycle detected in project! " + dependency_chain)
+
+                        current.color = ModuleGraphNodeColor.BLACK
+
+                if not found_changed_dep:
                     log_records.append(
                         ('SKIP', test.nodeid, "Unchanged")
                     )
-                    self.logger.info("Test '%s' doesn't touch new or modified code -- SKIPPING" % test.nodeid)
                     skip = pytest.mark.skip(reason="This test doesn't touch new or modified code")
                     test.add_marker(skip)
+
+                else:
+                    for node in stack:
+                        node.changed = True
+
+                    dependency_chain = ' -> '.join(
+                        list(reversed(list(map(lambda x: "%s::%s" % (x.module_path, x.name), stack))))
+                    )
+                    log_records.append(('RUN', test.nodeid, "Dependency changed: " + dependency_chain))
+                    test_count += 1
+
+                for node in self.project_nodes.values():
+                    node.color = ModuleGraphNodeColor.WHITE
 
             # TODO: add option to write to csv
             import csv
