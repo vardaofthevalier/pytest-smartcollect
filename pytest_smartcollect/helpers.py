@@ -8,6 +8,7 @@ import logging
 from git import Repo
 from importlib import import_module
 from chardet import UniversalDetector
+from abc import abstractmethod
 
 ListOrNone = typing.Union[list, None]
 StrOrNone = typing.Union[str, None]
@@ -40,85 +41,116 @@ class ChangedFile(object):
 DictOfChangedFile = typing.Dict[str, ChangedFile]
 
 
-class GenericVisitor(ast.NodeVisitor):
+class ModuleInfoExtractor(ast.NodeVisitor):
     def __init__(self):
-        super(GenericVisitor, self).__init__()
-        self.cache = []
-        self._ast_filepath = None
+        super(ModuleInfoExtractor, self).__init__()
+        self.info = {}
+        self.reset_info()
 
-    def extract(self, node) -> list:
-        self.cache.clear()
+    def reset_info(self):
+        self.info["imports"] = []
+        self.info["members"] = {
+            "functions": {},
+            "classes": {},
+            "assignments": {}
+        }
+
+    def extract(self, module_contents: str) -> dict:
+        self.reset_info()
+        node = ast.parse(module_contents)
         self.generic_visit(node)
-        return self.cache
-
-
-class BaseClassNameExtractor(GenericVisitor):
-    def __init__(self):
-        super(BaseClassNameExtractor, self).__init__()
-
-    def visit_ClassDef(self, node):
-        for base in node.bases:
-            self.generic_visit(base)
-
-    def visit_Name(self, node):
-        if ast.Attribute in [type(x) for x in ast.iter_child_nodes(node)]:
-            self.generic_visit(node)
-
-        else:
-            self.cache.append(node.id)
-
-    def visit_Attribute(self, node):
-        self.cache.append(node.attr)
-
-
-class ObjectNameExtractor(GenericVisitor):
-    def __init__(self):
-        super(ObjectNameExtractor, self).__init__()
-
-    def visit_Call(self, node):
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name):
-                self.cache.append(child.id)
-
-
-class DefinitionNodeExtractor(GenericVisitor):
-    def __init__(self):
-        super(DefinitionNodeExtractor, self).__init__()
-
-    def visit_FunctionDef(self, node):
-        self.cache.append(node)
-
-    def visit_ClassDef(self, node):
-        self.cache.append(node)
-        self.generic_visit(node)
-
-
-class ImportModuleNameExtractor(GenericVisitor):
-    def __init__(self):
-        super(ImportModuleNameExtractor, self).__init__()
+        return self.info
 
     def visit_Import(self, node):
-        self.cache.append((node.names[0].name, [], 0))
+        self.info["imports"].append((node.names[0].name, [], 0))
 
     def visit_ImportFrom(self, node):
         names = list(map(lambda x: x.name, node.names))
-        self.cache.append((node.module, names, node.level))
+        self.info["imports"].append((node.module, names, node.level))
 
+    def visit_Assign(self, node):
+        target_names = []
+        used_names = []
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                target_names.append(t.id)
+            else:
+                for child in ast.walk(t):
+                    if isinstance(child, ast.Name):
+                        target_names.append(child.id)
 
-class FixtureExtractor(GenericVisitor):
-    def __init__(self):
-        super(FixtureExtractor, self).__init__()
+        for child in ast.walk(node.value):
+            name = self._extract_name_from_node(child)
+            if name is not None:
+                used_names.append(name)
+
+        for tn in target_names:
+            self.info["members"]["assignments"][tn] = {"lineno": node.lineno, "uses": used_names}
+
+    def visit_ClassDef(self, node):
+        used_names = []
+        for base in node.bases:
+            name = self._extract_name_from_node(base)
+            if name is not None:
+                used_names.append(name)
+
+        used_names.extend(self._process_block_body(node))
+        self.info["members"]["classes"][node.name] = {"lineno": node.lineno, "uses": used_names}
 
     def visit_FunctionDef(self, node):
-        if len(node.decorator_list) > 0:
-            for dec in node.decorator_list:
-                if isinstance(dec, ast.Attribute):
-                    if dec.attr == 'fixture':
-                        self.cache.append(node)
+        self._process_function(node)
 
-                elif isinstance(dec, ast.Name):
-                    if dec.id == 'fixture':
-                        self.cache.append(node)
+    def visit_AsyncFunctionDef(self, node):
+        self._process_function(node)
+
+    def _extract_name_from_node(self, node) -> str:
+        name = None
+        if isinstance(node, ast.Name):
+            if ast.Attribute in [type(x) for x in ast.iter_child_nodes(node)]:
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Attribute):
+                        name = child.attr
+                        break
+
+            else:
+                name = node.id
+
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+
+        return name
+
+    def _process_function(self, node):
+        if len(node.decorator_list) > 0:
+            decorator_names = []
+            for dec in node.decorator_list:
+                name = self._extract_name_from_node(dec)
+                if name is not None:
+                    decorator_names.append(name)
+
+            self.info["members"]["functions"][node.name] = {
+                "uses": decorator_names
+            }
+
+        else:
+            self.info["members"]["functions"][node.name] = {"uses":[]}
+
+        self.info["members"]["functions"][node.name]["uses"].extend(self._process_block_body(node))
+        self.info["members"]["functions"][node.name]["args"] = self._process_args(node)
+        self.info["members"]["functions"][node.name]["lineno"] = node.lineno
+
+    def _process_block_body(self, node):
+        used_names = []
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                name = self._extract_name_from_node(child.func)
+                if name is not None:
+                    used_names.append(name)
+
+        return used_names
+
+    def _process_args(self, node):
+        return [x.arg for x in node.args.args]
 
 
 class SmartCollector(object):
@@ -315,11 +347,24 @@ class SmartCollector(object):
     def find_changed_members(self, changed_module: ChangedFile, repo_path: str) -> ListOfString:
         # find all changed members of changed_module
         changed_members = []
-        name_extractor = ObjectNameExtractor()
 
         contents, total_lines = self.read_file(os.path.join(repo_path, changed_module.current_filepath))
-        module_ast = ast.parse(contents)
-        direct_children = list(ast.iter_child_nodes(module_ast))
+        # module_ast = ast.parse(contents)
+        # direct_children = list(ast.iter_child_nodes(module_ast))
+
+        module_info_extractor = ModuleInfoExtractor()
+        module_info = module_info_extractor.extract(contents)
+        direct_children = []
+        for k, v in module_info["members"]["classes"].items():
+            direct_children.append((k, v["lineno"]))
+
+        for k, v in module_info["members"]["functions"].items():
+            direct_children.append((k, v["lineno"]))
+
+        for k, v in module_info["members"]["assignments"].items():
+            direct_children.append((k, v["lineno"]))
+
+        direct_children = sorted(direct_children, key=lambda x: x[1])
 
         # get a set of all changed lines in changed_module
         changed_lines = set()
@@ -327,23 +372,15 @@ class SmartCollector(object):
             changed_lines.update(set(ch))
 
         # the direct children of the module correspond to the imported names in test files
-        for idx, node in enumerate(direct_children):
-            if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
-                try:
-                    r = range(node.lineno, direct_children[idx + 1].lineno)
+        for (idx, (node_name, lineno)) in enumerate(direct_children):
+            try:
+                r = range(lineno, direct_children[idx + 1][1])
 
-                except IndexError:
-                    r = range(node.lineno, total_lines)
+            except IndexError:
+                r = range(lineno, total_lines)
 
-                if set(changed_lines).intersection(set(r)):
-                    if isinstance(node, ast.Assign):
-                        changed_members.extend(name_extractor.extract(node))
-
-                    elif isinstance(node, ast.FunctionDef):
-                        changed_members.append(node.name)
-
-                    else:
-                        changed_members.append(node.name)
+            if set(changed_lines).intersection(set(r)):
+                changed_members.extend(node_name)
 
         return changed_members
 
@@ -375,56 +412,75 @@ class SmartCollector(object):
 
     def dependencies_changed(self, path: str, object_name: str, change_map: DictOfListOfString, unchanged_map: DictOfListOfString, visited_map: DictOfListOfString, chain: ListOfString) -> bool:
         git_repo_root = self.find_git_repo_root(self.rootdir)
-
-        if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
-            chain.append("%s::%s" % (path, object_name))
-            return True
-
-        if path in unchanged_map.keys() and object_name in unchanged_map[path]:
-            return False
-
-        if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
-            return False
+        chain.append("%s::%s" % (path, object_name))
 
         # if this module and object have been visited before but aren't yet marked changed or unchanged, then we have detected a dependency cycle
-        if path in visited_map.keys() and object_name in visited_map[path]:
+        if path in visited_map.keys() and object_name in visited_map[path] and chain.count("%s::%s" % (path, object_name)) > 1:
             raise Exception("Dependency cycle detected: " + ' -> '.join(chain))
 
         else:
             self.add_key_and_value_to_linked_list(path, object_name, visited_map)
 
+        if path in change_map.keys() and object_name in change_map[path]: # if we've seen this file before and already know it to be changed, just return True
+            return True
+
+        if path in unchanged_map.keys() and object_name in unchanged_map[path]:
+            chain.pop()
+            return False
+
+        if not self.file_in_project(git_repo_root, path):  # if the file is outside of the project, don't bother checking it or any of its dependencies
+            self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
+            self.add_key_and_value_to_linked_list(path, object_name, visited_map)
+            chain.pop()
+            return False
+
+        assert object_name in visited_map[path]
+
         # otherwise, recursively check the dependencies of this file for other known changes
         contents, _ = self.read_file(path)
-        module_ast = ast.parse(contents)
+        module_info_extractor = ModuleInfoExtractor()
+        module_info = module_info_extractor.extract(contents)
 
         # find locally changed members
         locally_changed = []
         if path in change_map.keys():
             locally_changed = change_map[path]
 
-        # find the object of interest in the ast
-        obj = None
-        definition_extractor = DefinitionNodeExtractor()
-        definition_nodes = definition_extractor.extract(module_ast)
+        # find the module member of interest in the ast
+        # obj = None
+        # definition_extractor = DefinitionNodeExtractor()
+        # assignment_target_extractor = AssignmentExtractor()
+        #
+        # definition_nodes = definition_extractor.extract(module_ast)
+        # assignment_nodes = assignment_target_extractor.extract(module_ast)
 
-        for child in definition_nodes:
-            if child.name == object_name:
-                obj = child
-                break
-
-            else:
-                continue
-
-        if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
-            self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
-            return False
+        # for definition in definition_nodes:
+        #     if definition.name == object_name:
+        #         obj = definition
+        #         break
+        #
+        #     else:
+        #         continue
+        #
+        # for (assignment_name, assignment_value) in assignment_nodes:
+        #     if assignment_name == object_name:
+        #         obj = assignment_value
+        #         break
+        #
+        #     else:
+        #         continue
+        #
+        # if obj is None:  # if the object wasn't a definition and is unchanged, assume that there are no further dependencies in the chain
+        #     self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
+        #     chain.pop()
+        #     return False
 
         # extract imports
         imported_names_and_modules = {}
-        imne = ImportModuleNameExtractor()
-        extracted_imports = imne.extract(module_ast)
+        # imne = ImportModuleNameExtractor()
+        # extracted_imports = imne.extract(module_ast)
 
-        for (module_name, imported_names, import_level) in extracted_imports:
+        for (module_name, imported_names, import_level) in module_info["imports"]:
             if module_name in sys.builtin_module_names: # we can safely assume that builtin module changes aren't relevant
                 continue
 
@@ -467,33 +523,47 @@ class SmartCollector(object):
         # check base classes recursively
         base_class_name_extractor = BaseClassNameExtractor()
         if isinstance(obj, ast.ClassDef):
+            self.logger.warning("processing base classes for %s::%s" % (path, object_name))
             for base_name in base_class_name_extractor.extract(obj):
+                self.logger.warning(base_name)
                 if base_name in imported_names_and_modules.keys():
                     base_class_module_paths = imported_names_and_modules[base_name]
-                    for path in base_class_module_paths:
-                        if self.dependencies_changed(path, base_name, change_map, unchanged_map, visited_map, chain):
-                            self.add_key_and_value_to_linked_list(path, base_name, change_map)
+                    for base_class_path in base_class_module_paths:
+                        if self.dependencies_changed(base_class_path, base_name, change_map, unchanged_map, visited_map, chain):
+                            self.add_key_and_value_to_linked_list(base_class_path, base_name, change_map)
+                            self.add_key_and_value_to_linked_list(path, object_name, change_map)
                             return True
+
+                elif base_name in [x.name for x in definition_nodes]:
+                    if self.dependencies_changed(path, base_name, change_map, unchanged_map, visited_map, chain):
+                        self.add_key_and_value_to_linked_list(path, base_name, change_map)
+                        self.add_key_and_value_to_linked_list(path, object_name, change_map)
+                        return True
 
         # extract call objects from obj
         object_name_extractor = ObjectNameExtractor()
         used_names = set(object_name_extractor.extract(obj))
 
+        self.logger.warning("used names in %s::%s: " % (path, object_name) + ', '.join(used_names))
         for name in used_names:
+
             if name == object_name:  # to avoid infinite recursion when a class invokes it's own class methods or if a recursive function calls itself
                 continue
 
             if name in locally_changed:
                 if path in change_map.keys() and name in change_map[path]:
+                    self.add_key_and_value_to_linked_list(path, object_name, change_map)
                     return True
 
             if name in imported_names_and_modules.keys():
                 for module_path in imported_names_and_modules[name]:
                     if self.dependencies_changed(module_path, name, change_map, unchanged_map, visited_map, chain):
                         self.add_key_and_value_to_linked_list(module_path, name, change_map)
+                        self.add_key_and_value_to_linked_list(path, object_name, change_map)
                         return True
 
         self.add_key_and_value_to_linked_list(path, object_name, unchanged_map)
+        chain.pop()
         return False
 
     def run(self, items):
@@ -542,6 +612,7 @@ class SmartCollector(object):
             fixture_map = {}
             ast_map = {}
             unchanged_members_and_modules = {}
+            module_info_extractor = ModuleInfoExtractor()
 
             for test in items:
                 test_name = test.name.split('[')[0]  # TODO: figure out a better way to handle test names of parameterized tests
@@ -573,14 +644,17 @@ class SmartCollector(object):
                     self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
                     continue
 
-                # check dependencies within any defined fixtures
-                if str(test.fspath) in ast_map.keys():
-                    test_file_ast = ast_map[str(test.fspath)]
+                contents, _ = self.read_file(str(test.fspath))
+                test_module_info = module_info_extractor.extract(contents)
 
-                else:
-                    contents, _ = self.read_file(str(test.fspath))
-                    test_file_ast = ast.parse(contents)
-                    ast_map[str(test.fspath)] = test_file_ast
+                # check dependencies within any defined fixtures
+                # if str(test.fspath) in ast_map.keys():
+                #     test_file_ast = ast_map[str(test.fspath)]
+                #
+                # else:
+                #     contents, _ = self.read_file(str(test.fspath))
+                #     test_file_ast = ast.parse(contents)
+                #     ast_map[str(test.fspath)] = test_file_ast
 
                 test_node = None
                 for child in ast.iter_child_nodes(test_file_ast):
