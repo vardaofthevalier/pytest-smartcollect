@@ -69,20 +69,7 @@ class ModuleInfoExtractor(ast.NodeVisitor):
         self.info["imports"].append((node.module, names, node.level))
 
     def visit_Assign(self, node):
-        target_names = []
-        used_names = []
-        for t in node.targets:
-            if isinstance(t, ast.Name):
-                target_names.append(t.id)
-            else:
-                for child in ast.walk(t):
-                    if isinstance(child, ast.Name):
-                        target_names.append(child.id)
-
-        for child in ast.walk(node.value):
-            name = self._extract_name_from_node(child)
-            if name is not None:
-                used_names.append(name)
+        target_names, used_names = self._process_assignment(node)
 
         for tn in target_names:
             self.info["members"]["assignments"][tn] = {"lineno": node.lineno, "uses": used_names}
@@ -94,7 +81,16 @@ class ModuleInfoExtractor(ast.NodeVisitor):
             if name is not None:
                 used_names.append(name)
 
-        used_names.extend(self._process_block_body(node))
+        used_names.extend(self._process_decorators(node))
+
+        for child in ast.iter_child_nodes(node.body):
+            if isinstance(child, ast.FunctionDef):
+                self._process_method(child, node.name)
+
+            elif isinstance(child, ast.Assign):
+                _, used = self._process_assignment(child)
+                used_names.extend(used)
+
         self.info["members"]["classes"][node.name] = {"lineno": node.lineno, "uses": used_names}
 
     def visit_FunctionDef(self, node):
@@ -120,7 +116,38 @@ class ModuleInfoExtractor(ast.NodeVisitor):
 
         return name
 
+    def _process_assignment(self, node):
+        target_names = []
+        used_names = []
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                target_names.append(t.id)
+            else:
+                for child in ast.walk(t):
+                    if isinstance(child, ast.Name):
+                        target_names.append(child.id)
+
+        for child in ast.walk(node.value):
+            name = self._extract_name_from_node(child)
+            if name is not None:
+                used_names.append(name)
+
+        return target_names, used_names
+
+    def _process_method(self, node, classname):
+        self.info["members"]["classes"][classname]["functions"][node.name] = {"uses": self._process_decorators(node)}
+        self.info["members"]["classes"][classname]["functions"][node.name]["uses"].extend(self._process_block_body(node))
+        self.info["members"]["classes"][classname]["functions"][node.name]["args"] = self._process_args(node)
+        self.info["members"]["classes"][classname]["functions"][node.name]["lineno"] = node.lineno
+
     def _process_function(self, node):
+        self.info["members"]["functions"][node.name] = {"uses": self._process_decorators(node)}
+        self.info["members"]["functions"][node.name]["uses"].extend(self._process_block_body(node))
+        self.info["members"]["functions"][node.name]["args"] = self._process_args(node)
+        self.info["members"]["functions"][node.name]["lineno"] = node.lineno
+
+    def _process_decorators(self, node):
+        decorator_names = []
         if len(node.decorator_list) > 0:
             decorator_names = []
             for dec in node.decorator_list:
@@ -128,16 +155,7 @@ class ModuleInfoExtractor(ast.NodeVisitor):
                 if name is not None:
                     decorator_names.append(name)
 
-            self.info["members"]["functions"][node.name] = {
-                "uses": decorator_names
-            }
-
-        else:
-            self.info["members"]["functions"][node.name] = {"uses":[]}
-
-        self.info["members"]["functions"][node.name]["uses"].extend(self._process_block_body(node))
-        self.info["members"]["functions"][node.name]["args"] = self._process_args(node)
-        self.info["members"]["functions"][node.name]["lineno"] = node.lineno
+        return decorator_names
 
     def _process_block_body(self, node):
         used_names = []
@@ -610,19 +628,29 @@ class SmartCollector(object):
 
             test_count = 0
             fixture_map = {}
-            ast_map = {}
+            test_module_info_map = {}
             unchanged_members_and_modules = {}
             module_info_extractor = ModuleInfoExtractor()
 
+            # first, process all of the test modules
             for test in items:
                 test_name = test.name.split('[')[0]  # TODO: figure out a better way to handle test names of parameterized tests
 
+                contents, _ = self.read_file(str(test.fspath))
+                test_module_info = module_info_extractor.extract(contents)
+                test_module_info_map[test_name] = test_module_info
+
+            # TODO: populate fixture map using info from the test_module_info object -- functions decorated with a fixture will use the name 'fixture'; functions that use fixtures will contain the fixture name in their arg list
+
+            # next, determine if this test should run
+            for test in items:
                 # if the test is new, run it anyway
                 if str(test.fspath) in changed_files.keys() and changed_files[str(test.fspath)].change_type == 'A':
                     log_records.append(
                         ('RUN', test.nodeid, "New test")
                     )
-                    self.logger.info("Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
+                    self.logger.info(
+                        "Test '%s' is new, so will be run regardless of changes to the code it tests" % test.nodeid)
                     test_count += 1
                     continue
 
@@ -644,9 +672,6 @@ class SmartCollector(object):
                     self.logger.info("Found skip marker on test '%s' -- ignoring" % test.nodeid)
                     continue
 
-                contents, _ = self.read_file(str(test.fspath))
-                test_module_info = module_info_extractor.extract(contents)
-
                 # check dependencies within any defined fixtures
                 # if str(test.fspath) in ast_map.keys():
                 #     test_file_ast = ast_map[str(test.fspath)]
@@ -656,47 +681,47 @@ class SmartCollector(object):
                 #     test_file_ast = ast.parse(contents)
                 #     ast_map[str(test.fspath)] = test_file_ast
 
-                test_node = None
-                for child in ast.iter_child_nodes(test_file_ast):
-                    if isinstance(child, ast.ClassDef):
-                        for subchild in ast.iter_child_nodes(child):
-                            if isinstance(subchild, ast.FunctionDef) and subchild.name == test_name:
-                                test_node = subchild
-                                break
-
-                        if test_node is not None:
-                            break
-
-                    elif isinstance(child, ast.FunctionDef) and child.name == test_name:
-                        test_node = child
-                        break
-
-                assert test_node is not None
-
-                if str(test.fspath) not in fixture_map.keys():
-                    fixture_extractor = FixtureExtractor()
-                    fixtures = fixture_extractor.extract(test_file_ast)
-
-                    fixture_map[str(test.fspath)] = fixtures
-
-                found_changed_fixture = False
-                for fixture in fixture_map[str(test.fspath)]:
-                    for arg in test_node.args.args:
-                        if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, unchanged_members_and_modules, {}, []):
-                            log_records.append(
-                                ('RUN', test.nodeid, "Uses changed fixture")
-                            )
-                            self.logger.info("Test '%s' will run because it uses a changed fixture (%s)" % (
-                            test.nodeid, fixture.name))
-                            test_count += 1
-                            found_changed_fixture = True
-                            break
-
-                    if found_changed_fixture:
-                        break
-
-                if found_changed_fixture:
-                    continue
+                # test_node = None
+                # for child in ast.iter_child_nodes(test_file_ast):
+                #     if isinstance(child, ast.ClassDef):
+                #         for subchild in ast.iter_child_nodes(child):
+                #             if isinstance(subchild, ast.FunctionDef) and subchild.name == test_name:
+                #                 test_node = subchild
+                #                 break
+                #
+                #         if test_node is not None:
+                #             break
+                #
+                #     elif isinstance(child, ast.FunctionDef) and child.name == test_name:
+                #         test_node = child
+                #         break
+                #
+                # assert test_node is not None
+                #
+                # if str(test.fspath) not in fixture_map.keys():
+                #     fixture_extractor = FixtureExtractor()
+                #     fixtures = fixture_extractor.extract(test_file_ast)
+                #
+                #     fixture_map[str(test.fspath)] = fixtures
+                #
+                # found_changed_fixture = False
+                # for fixture in fixture_map[str(test.fspath)]:
+                #     for arg in test_node.args.args:
+                #         if arg.arg == fixture.name and self.dependencies_changed(str(test.fspath), fixture.name, changed_members_and_modules, unchanged_members_and_modules, {}, []):
+                #             log_records.append(
+                #                 ('RUN', test.nodeid, "Uses changed fixture")
+                #             )
+                #             self.logger.info("Test '%s' will run because it uses a changed fixture (%s)" % (
+                #             test.nodeid, fixture.name))
+                #             test_count += 1
+                #             found_changed_fixture = True
+                #             break
+                #
+                #     if found_changed_fixture:
+                #         break
+                #
+                # if found_changed_fixture:
+                #     continue
 
                 # otherwise, check the dependency chain from inside the test function
                 chain = []
