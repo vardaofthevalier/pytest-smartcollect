@@ -24,7 +24,7 @@ setup(
     long_description=read('README.md'),
     py_modules=['pytest_smartcollect'],
     python_requires='>2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*',
-    install_requires=['pytest>=3.5.0', 'GitPython==2.1.11', 'chardet==3.0.4'],
+    install_requires=['pytest>=3.5.0', 'GitPython==3.1.34', 'chardet==3.0.4'],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Framework :: Pytest',
